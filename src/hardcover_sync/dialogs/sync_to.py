@@ -28,6 +28,33 @@ from ..api import HardcoverAPI, UserBook
 from ..config import READING_STATUSES, STATUS_IDS, get_plugin_prefs
 
 
+def format_rating_as_stars(rating: float | None) -> str:
+    """
+    Format a rating (0-5 scale) as star characters.
+
+    Args:
+        rating: Rating value from 0-5, or None.
+
+    Returns:
+        String like "★★★★½" or "(empty)" if None.
+    """
+    if rating is None:
+        return "(empty)"
+
+    full_stars = int(rating)
+    half_star = (rating - full_stars) >= 0.5
+
+    result = "★" * full_stars
+    if half_star:
+        result += "½"
+
+    # Pad with empty stars for visual consistency
+    empty_stars = 5 - full_stars - (1 if half_star else 0)
+    result += "☆" * empty_stars
+
+    return result or "☆☆☆☆☆"  # Show empty stars for 0 rating
+
+
 @dataclass
 class SyncToChange:
     """Represents a change to be synced from Calibre to Hardcover."""
@@ -37,9 +64,15 @@ class SyncToChange:
     hardcover_book_id: int
     user_book_id: int | None  # None if not in Hardcover library yet
     field: str  # status, rating, progress, date_started, date_read, review
-    old_value: str | None  # Current Hardcover value
-    new_value: str | None  # New value from Calibre
+    old_value: str | None  # Current Hardcover value (for display)
+    new_value: str | None  # New value from Calibre (for display)
+    raw_value: str | None = None  # Raw value for API (if different from display)
     apply: bool = True
+
+    @property
+    def api_value(self) -> str | None:
+        """Get the value to send to the API."""
+        return self.raw_value if self.raw_value is not None else self.new_value
 
     @property
     def display_field(self) -> str:
@@ -376,9 +409,19 @@ class SyncToHardcoverDialog(QDialog):
                 calibre_rating = self._get_calibre_value(book_id, rating_col)
                 if calibre_rating is not None:
                     # Convert Calibre rating to Hardcover scale (0-5)
+                    # Both built-in rating and custom rating columns use 0-10 internally
                     if rating_col == "rating":
                         # Built-in rating is 0-10
                         hc_new_rating = calibre_rating / 2 if calibre_rating else None
+                    elif rating_col.startswith("#"):
+                        # Custom column - check if it's a rating type
+                        col_info = self._get_custom_column_metadata(rating_col)
+                        if col_info and col_info.get("datatype") == "rating":
+                            # Custom rating columns also use 0-10 internally
+                            hc_new_rating = calibre_rating / 2 if calibre_rating else None
+                        else:
+                            # Other column types (int, float) - assume already 0-5
+                            hc_new_rating = float(calibre_rating)
                     else:
                         hc_new_rating = float(calibre_rating)
 
@@ -391,10 +434,9 @@ class SyncToHardcoverDialog(QDialog):
                                 hardcover_book_id=hc_book_id,
                                 user_book_id=user_book_id,
                                 field="rating",
-                                old_value=str(hc_current_rating)
-                                if hc_current_rating is not None
-                                else "(empty)",
-                                new_value=str(hc_new_rating),
+                                old_value=format_rating_as_stars(hc_current_rating),
+                                new_value=format_rating_as_stars(hc_new_rating),
+                                raw_value=str(hc_new_rating),
                             )
                         )
                         book_has_changes = True
@@ -532,6 +574,14 @@ class SyncToHardcoverDialog(QDialog):
         if not column:
             return None
         return self.db.field_for(column, book_id)
+
+    def _get_custom_column_metadata(self, column: str) -> dict | None:
+        """Get metadata for a custom column."""
+        try:
+            custom_columns = self.gui.library_view.model().custom_columns
+            return custom_columns.get(column)
+        except (AttributeError, Exception):
+            return None
 
     def _populate_changes_table(self):
         """Populate the changes table."""
@@ -712,15 +762,15 @@ class SyncToHardcoverDialog(QDialog):
                 if status_id:
                     update_data["status_id"] = status_id
             elif change.field == "rating":
-                update_data["rating"] = float(change.new_value) if change.new_value else None
+                update_data["rating"] = float(change.api_value) if change.api_value else None
             elif change.field == "progress":
-                update_data["progress_pages"] = int(change.new_value) if change.new_value else None
+                update_data["progress_pages"] = int(change.api_value) if change.api_value else None
             elif change.field == "date_started":
-                update_data["started_at"] = change.new_value
+                update_data["started_at"] = change.api_value
             elif change.field == "date_read":
-                update_data["finished_at"] = change.new_value
+                update_data["finished_at"] = change.api_value
             elif change.field == "review":
-                update_data["review"] = change.new_value
+                update_data["review"] = change.api_value
 
         if not update_data:
             return False, "No valid update data"

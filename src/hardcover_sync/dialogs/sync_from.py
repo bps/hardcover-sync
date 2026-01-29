@@ -10,9 +10,6 @@ from dataclasses import dataclass
 from qt.core import (
     QAbstractItemView,
     QApplication,
-    QBrush,
-    QCheckBox,
-    QColor,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -21,14 +18,41 @@ from qt.core import (
     QLabel,
     QProgressBar,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     Qt,
 )
 
 from ..api import HardcoverAPI, UserBook
 from ..config import READING_STATUSES, get_plugin_prefs
+
+
+def format_rating_as_stars(rating: float | None) -> str:
+    """
+    Format a rating (0-5 scale) as star characters.
+
+    Args:
+        rating: Rating value from 0-5, or None.
+
+    Returns:
+        String like "★★★★½" or "(empty)" if None.
+    """
+    if rating is None:
+        return "(empty)"
+
+    full_stars = int(rating)
+    half_star = (rating - full_stars) >= 0.5
+
+    result = "★" * full_stars
+    if half_star:
+        result += "½"
+
+    # Pad with empty stars for visual consistency
+    empty_stars = 5 - full_stars - (1 if half_star else 0)
+    result += "☆" * empty_stars
+
+    return result or "☆☆☆☆☆"  # Show empty stars for 0 rating
 
 
 @dataclass
@@ -39,9 +63,15 @@ class SyncChange:
     calibre_title: str
     hardcover_book_id: int
     field: str  # status, rating, progress, date_started, date_read, review
-    old_value: str | None
-    new_value: str | None
+    old_value: str | None  # Display value (e.g., stars for rating)
+    new_value: str | None  # Display value (e.g., stars for rating)
+    raw_value: str | None = None  # Raw value for applying (if different from display)
     apply: bool = True  # Whether to apply this change
+
+    @property
+    def api_value(self) -> str | None:
+        """Get the value to apply to Calibre."""
+        return self.raw_value if self.raw_value is not None else self.new_value
 
     @property
     def display_field(self) -> str:
@@ -119,31 +149,32 @@ class SyncFromHardcoverDialog(QDialog):
         fetch_layout.addWidget(self.fetch_button)
         fetch_layout.addStretch()
 
-        # Select all/none
-        self.select_all_checkbox = QCheckBox("Select All")
-        self.select_all_checkbox.setChecked(True)
-        self.select_all_checkbox.stateChanged.connect(self._on_select_all_changed)
-        self.select_all_checkbox.setEnabled(False)
-        fetch_layout.addWidget(self.select_all_checkbox)
+        # Expand/Collapse all buttons
+        self.expand_all_button = QPushButton("Expand All")
+        self.expand_all_button.clicked.connect(lambda: self.changes_tree.expandAll())
+        self.expand_all_button.setEnabled(False)
+        fetch_layout.addWidget(self.expand_all_button)
+
+        self.collapse_all_button = QPushButton("Collapse All")
+        self.collapse_all_button.clicked.connect(lambda: self.changes_tree.collapseAll())
+        self.collapse_all_button.setEnabled(False)
+        fetch_layout.addWidget(self.collapse_all_button)
 
         layout.addLayout(fetch_layout)
 
-        # Changes table
-        self.changes_table = QTableWidget()
-        self.changes_table.setColumnCount(6)
-        self.changes_table.setHorizontalHeaderLabels(
-            ["Apply", "Book", "Field", "Current Value", "New Value", ""]
-        )
-        self.changes_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.changes_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        header = self.changes_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        # Changes tree (hierarchical view with books as parents, changes as children)
+        self.changes_tree = QTreeWidget()
+        self.changes_tree.setHeaderLabels(["Book / Field", "Current Value", "New Value"])
+        self.changes_tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.changes_tree.setRootIsDecorated(True)
+        self.changes_tree.setIndentation(20)
+        self.changes_tree.itemChanged.connect(self._on_item_changed)
+
+        header = self.changes_tree.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.changes_table.setColumnHidden(5, True)  # Hidden column for data
-        layout.addWidget(self.changes_table)
+        layout.addWidget(self.changes_tree)
 
         # Summary
         self.summary_label = QLabel("")
@@ -305,11 +336,12 @@ class SyncFromHardcoverDialog(QDialog):
 
             # Find changes
             self.changes = self._find_changes(hc_to_calibre)
-            self._populate_changes_table()
+            self._populate_changes_tree()
 
             # Update UI
             self.progress_bar.setVisible(False)
-            self.select_all_checkbox.setEnabled(True)
+            self.expand_all_button.setEnabled(len(self.changes) > 0)
+            self.collapse_all_button.setEnabled(len(self.changes) > 0)
             self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(
                 len(self.changes) > 0
             )
@@ -439,11 +471,27 @@ class SyncFromHardcoverDialog(QDialog):
             # Check rating
             if sync_rating and rating_col and hc_book.rating is not None:
                 current = self._get_calibre_value(calibre_id, rating_col)
-                new_rating = str(hc_book.rating)
-                # Convert to Calibre rating scale if using built-in rating
+                # Convert Hardcover rating (0-5) to Calibre scale
                 if rating_col == "rating":
                     # Built-in rating is 0-10 (displayed as stars)
                     new_rating = str(int(hc_book.rating * 2))
+                    # Convert current Calibre value to 0-5 for star display
+                    current_for_stars = current / 2 if current else None
+                elif rating_col.startswith("#"):
+                    # Custom column - check if it's a rating type
+                    col_info = self._get_custom_column_metadata(rating_col)
+                    if col_info and col_info.get("datatype") == "rating":
+                        # Custom rating columns also use 0-10 internally
+                        new_rating = str(int(hc_book.rating * 2))
+                        current_for_stars = current / 2 if current else None
+                    else:
+                        # Other column types (int, float) - store as 0-5
+                        new_rating = str(hc_book.rating)
+                        current_for_stars = float(current) if current else None
+                else:
+                    new_rating = str(hc_book.rating)
+                    current_for_stars = float(current) if current else None
+
                 if str(current) != new_rating:
                     changes.append(
                         SyncChange(
@@ -451,8 +499,9 @@ class SyncFromHardcoverDialog(QDialog):
                             calibre_title=calibre_title,
                             hardcover_book_id=hc_book.book_id,
                             field="rating",
-                            old_value=str(current) if current else "(empty)",
-                            new_value=new_rating,
+                            old_value=format_rating_as_stars(current_for_stars),
+                            new_value=format_rating_as_stars(hc_book.rating),
+                            raw_value=new_rating,
                         )
                     )
 
@@ -562,91 +611,127 @@ class SyncFromHardcoverDialog(QDialog):
 
         return self.db.field_for(column, book_id)
 
-    def _populate_changes_table(self):
-        """Populate the changes table with changes grouped by book."""
-        # Sort changes by calibre_id to group by book
-        self.changes.sort(key=lambda c: (c.calibre_title.lower(), c.calibre_id))
+    def _populate_changes_tree(self):
+        """Populate the changes tree with books as parents and changes as children."""
+        self.changes_tree.clear()
+        self.changes_tree.blockSignals(True)
 
-        self.changes_table.setRowCount(len(self.changes))
+        # Group changes by calibre_id
+        books: dict[int, list[SyncChange]] = {}
+        for change in self.changes:
+            if change.calibre_id not in books:
+                books[change.calibre_id] = []
+            books[change.calibre_id].append(change)
 
-        # Alternating colors for book groups
-        colors = [
-            QColor(255, 255, 255),  # White
-            QColor(245, 245, 250),  # Light gray-blue
-        ]
+        # Sort books by title
+        sorted_books = sorted(books.items(), key=lambda x: x[1][0].calibre_title.lower())
 
-        current_book_id = None
-        color_index = 0
+        # Create tree items
+        for calibre_id, book_changes in sorted_books:
+            book_title = book_changes[0].calibre_title
+            change_count = len(book_changes)
 
-        for row, change in enumerate(self.changes):
-            # Track book groups for alternating colors
-            if change.calibre_id != current_book_id:
-                current_book_id = change.calibre_id
-                color_index = 1 - color_index  # Toggle between 0 and 1
-                show_title = True
-            else:
-                show_title = False
+            # Create parent item for the book
+            book_item = QTreeWidgetItem()
+            book_item.setText(
+                0, f"{book_title} ({change_count} change{'s' if change_count != 1 else ''})"
+            )
+            book_item.setFlags(book_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            book_item.setCheckState(0, Qt.CheckState.Checked)
+            book_item.setData(0, Qt.ItemDataRole.UserRole, ("book", calibre_id))
 
-            bg_brush = QBrush(colors[color_index])
+            # Make book title bold
+            font = book_item.font(0)
+            font.setBold(True)
+            book_item.setFont(0, font)
 
-            # Apply checkbox
-            checkbox = QCheckBox()
-            checkbox.setChecked(change.apply)
-            checkbox.stateChanged.connect(lambda state, r=row: self._on_checkbox_changed(r, state))
-            self.changes_table.setCellWidget(row, 0, checkbox)
+            # Create child items for each change
+            for change in book_changes:
+                change_item = QTreeWidgetItem(book_item)
+                change_item.setText(0, change.display_field)
+                change_item.setText(1, change.old_value or "(empty)")
+                change_item.setText(2, change.new_value or "(empty)")
+                change_item.setFlags(change_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                change_item.setCheckState(
+                    0, Qt.CheckState.Checked if change.apply else Qt.CheckState.Unchecked
+                )
+                change_item.setData(0, Qt.ItemDataRole.UserRole, ("change", change))
 
-            # Book title - only show for first row of each book
-            title_item = QTableWidgetItem(change.calibre_title if show_title else "")
-            title_item.setBackground(bg_brush)
-            if show_title:
-                title_item.setFont(self._get_bold_font())
-            self.changes_table.setItem(row, 1, title_item)
+                # Color the new value green
+                change_item.setForeground(2, Qt.GlobalColor.darkGreen)
 
-            # Field
-            field_item = QTableWidgetItem(change.display_field)
-            field_item.setBackground(bg_brush)
-            self.changes_table.setItem(row, 2, field_item)
+            self.changes_tree.addTopLevelItem(book_item)
 
-            # Current value
-            old_item = QTableWidgetItem(change.old_value or "")
-            old_item.setBackground(bg_brush)
-            self.changes_table.setItem(row, 3, old_item)
+        # Expand all by default
+        self.changes_tree.expandAll()
+        self.changes_tree.blockSignals(False)
 
-            # New value
-            new_item = QTableWidgetItem(change.new_value or "")
-            new_item.setForeground(Qt.GlobalColor.darkGreen)
-            new_item.setBackground(bg_brush)
-            self.changes_table.setItem(row, 4, new_item)
+        # Enable expand/collapse buttons
+        self.expand_all_button.setEnabled(True)
+        self.collapse_all_button.setEnabled(True)
 
-    def _get_bold_font(self):
-        """Get a bold version of the default font."""
-        font = self.changes_table.font()
-        font.setBold(True)
-        return font
+    def _on_item_changed(self, item: QTreeWidgetItem, column: int):
+        """Handle checkbox state changes in the tree."""
+        if column != 0:
+            return
 
-    def _on_checkbox_changed(self, row: int, state: int):
-        """Handle checkbox state change."""
-        if 0 <= row < len(self.changes):
-            self.changes[row].apply = state == Qt.CheckState.Checked.value
-            self._update_summary()
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not data:
+            return
 
-    def _on_select_all_changed(self, state: int):
-        """Handle select all checkbox."""
-        checked = state == Qt.CheckState.Checked.value
-        for row, change in enumerate(self.changes):
-            change.apply = checked
-            checkbox = self.changes_table.cellWidget(row, 0)
-            if checkbox:
-                checkbox.blockSignals(True)
-                checkbox.setChecked(checked)
-                checkbox.blockSignals(False)
+        item_type, item_data = data
+
+        self.changes_tree.blockSignals(True)
+
+        if item_type == "book":
+            # Book item changed - update all child changes
+            checked = item.checkState(0) == Qt.CheckState.Checked
+            for i in range(item.childCount()):
+                child = item.child(i)
+                child.setCheckState(
+                    0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                )
+                child_data = child.data(0, Qt.ItemDataRole.UserRole)
+                if child_data and child_data[0] == "change":
+                    child_data[1].apply = checked
+
+        elif item_type == "change":
+            # Individual change item changed
+            change = item_data
+            change.apply = item.checkState(0) == Qt.CheckState.Checked
+
+            # Update parent book item state
+            parent = item.parent()
+            if parent:
+                self._update_parent_check_state(parent)
+
+        self.changes_tree.blockSignals(False)
         self._update_summary()
+
+    def _update_parent_check_state(self, parent: QTreeWidgetItem):
+        """Update parent checkbox based on children states."""
+        checked_count = 0
+        total = parent.childCount()
+
+        for i in range(total):
+            if parent.child(i).checkState(0) == Qt.CheckState.Checked:
+                checked_count += 1
+
+        if checked_count == 0:
+            parent.setCheckState(0, Qt.CheckState.Unchecked)
+        elif checked_count == total:
+            parent.setCheckState(0, Qt.CheckState.Checked)
+        else:
+            parent.setCheckState(0, Qt.CheckState.PartiallyChecked)
 
     def _update_summary(self):
         """Update the summary label."""
         selected = sum(1 for c in self.changes if c.apply)
         total = len(self.changes)
-        self.summary_label.setText(f"<b>{selected}</b> of {total} changes selected to apply.")
+        books_affected = len({c.calibre_id for c in self.changes if c.apply})
+        self.summary_label.setText(
+            f"<b>{selected}</b> of {total} changes selected ({books_affected} book{'s' if books_affected != 1 else ''})."
+        )
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(selected > 0)
 
     def _on_apply(self):
@@ -749,7 +834,7 @@ class SyncFromHardcoverDialog(QDialog):
         if not column:
             return False, f"No column mapped for {change.display_field}"
 
-        value = change.new_value
+        value = change.api_value
 
         try:
             # Handle different column types
@@ -776,7 +861,8 @@ class SyncFromHardcoverDialog(QDialog):
                     else:
                         value = None
                 elif datatype == "rating":
-                    value = int(float(value) * 2) if value else None
+                    # raw_value is already in 0-10 scale for rating columns
+                    value = int(float(value)) if value else None
 
                 self.db.set_field(column, {change.calibre_id: value})
             else:
