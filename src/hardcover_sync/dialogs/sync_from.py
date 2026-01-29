@@ -780,6 +780,9 @@ class SyncFromHardcoverDialog(QDialog):
 
             self.changes_tree.addTopLevelItem(updates_header)
 
+        # Update parent check states to reflect children
+        self._sync_parent_check_states()
+
         # Expand all by default
         self.changes_tree.expandAll()
         self.changes_tree.blockSignals(False)
@@ -870,18 +873,51 @@ class SyncFromHardcoverDialog(QDialog):
     def _update_parent_check_state(self, parent: QTreeWidgetItem):
         """Update parent checkbox based on children states."""
         checked_count = 0
+        unchecked_count = 0
         total = parent.childCount()
 
         for i in range(total):
-            if parent.child(i).checkState(0) == Qt.CheckState.Checked:
+            state = parent.child(i).checkState(0)
+            if state == Qt.CheckState.Checked:
                 checked_count += 1
+            elif state == Qt.CheckState.Unchecked:
+                unchecked_count += 1
+            # PartiallyChecked counts as neither fully checked nor unchecked
 
-        if checked_count == 0:
-            parent.setCheckState(0, Qt.CheckState.Unchecked)
-        elif checked_count == total:
+        if checked_count == total:
             parent.setCheckState(0, Qt.CheckState.Checked)
+        elif unchecked_count == total:
+            parent.setCheckState(0, Qt.CheckState.Unchecked)
         else:
             parent.setCheckState(0, Qt.CheckState.PartiallyChecked)
+
+    def _sync_parent_check_states(self):
+        """Sync all parent check states to reflect their children after populating the tree."""
+        for i in range(self.changes_tree.topLevelItemCount()):
+            header = self.changes_tree.topLevelItem(i)
+            if header is None:
+                continue
+
+            data = header.data(0, Qt.ItemDataRole.UserRole)
+            if not data:
+                continue
+
+            header_type, _ = data
+
+            if header_type == "new_books_header":
+                # Direct children are new_book items
+                self._update_parent_check_state(header)
+
+            elif header_type == "updates_header":
+                # Children are book items, which have change items as children
+                # First update each book item based on its changes
+                for j in range(header.childCount()):
+                    book_item = header.child(j)
+                    if book_item is not None:
+                        self._update_parent_check_state(book_item)
+
+                # Then update the header based on book items
+                self._update_parent_check_state(header)
 
     def _update_summary(self):
         """Update the summary label."""
