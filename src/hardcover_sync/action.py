@@ -121,21 +121,175 @@ class HardcoverSyncAction(InterfaceAction):
     # Action handlers (stubs for now)
     # -------------------------------------------------------------------------
 
+    def _get_api(self):
+        """Get an API instance with the configured token."""
+        from .api import HardcoverAPI
+        from .config import get_plugin_prefs
+
+        prefs = get_plugin_prefs()
+        token = prefs.get("api_token", "")
+        if not token:
+            from calibre.gui2 import error_dialog
+
+            error_dialog(
+                self.gui,
+                "Not Configured",
+                "Please configure your Hardcover API token first.",
+                show=True,
+            )
+            return None
+        return HardcoverAPI(token=token)
+
+    def _update_calibre_status(self, db, book_id: int, status_id: int):
+        """Update the Calibre status column if configured."""
+        from .config import READING_STATUSES, get_plugin_prefs
+
+        prefs = get_plugin_prefs()
+        status_column = prefs.get("status_column")
+
+        if not status_column:
+            return  # No column mapped
+
+        status_name = READING_STATUSES.get(status_id, "Unknown")
+
+        try:
+            # Get the column label without the # prefix
+            col_name = status_column.lstrip("#")
+            db.set_field(f"#{col_name}", {book_id: status_name})
+        except Exception:
+            pass  # Silently fail if column update fails
+
     def set_reading_status(self, status_id):
-        """Set the reading status for selected books."""
+        """Set the reading status for selected books on Hardcover."""
+        from calibre.gui2 import error_dialog, info_dialog
+
+        from .config import READING_STATUSES
+        from .matcher import get_hardcover_id
+
         book_ids = self.get_selected_book_ids()
         if not book_ids:
             return self._show_no_selection_error()
-        # TODO: Implement
-        print(f"Set status {status_id} for books: {book_ids}")
+
+        api = self._get_api()
+        if not api:
+            return
+
+        db = self.gui.current_db.new_api
+        status_name = READING_STATUSES.get(status_id, "Unknown")
+
+        success_count = 0
+        not_linked = []
+        errors = []
+
+        for book_id in book_ids:
+            hc_id = get_hardcover_id(db, book_id)
+            title = db.field_for("title", book_id) or "Unknown"
+
+            if not hc_id:
+                not_linked.append(title)
+                continue
+
+            try:
+                # Check if book is already in user's library
+                user_book = api.get_user_book(hc_id)
+
+                if user_book:
+                    # Update existing
+                    api.update_user_book(user_book.id, status_id=status_id)
+                else:
+                    # Add to library with this status
+                    api.add_book_to_library(book_id=hc_id, status_id=status_id)
+
+                # Update Calibre column if mapped
+                self._update_calibre_status(db, book_id, status_id)
+                success_count += 1
+
+            except Exception as e:
+                errors.append(f"{title}: {e}")
+
+        # Show results
+        if success_count > 0:
+            msg = f"Set {success_count} book(s) to '{status_name}'."
+            if not_linked:
+                msg += f"\n\n{len(not_linked)} book(s) not linked to Hardcover."
+            if errors:
+                msg += f"\n\n{len(errors)} error(s) occurred."
+            info_dialog(self.gui, "Status Updated", msg, show=True)
+        elif not_linked:
+            error_dialog(
+                self.gui,
+                "Not Linked",
+                "None of the selected books are linked to Hardcover.\n"
+                "Use 'Link to Hardcover' first.",
+                show=True,
+            )
+        elif errors:
+            error_dialog(
+                self.gui,
+                "Error",
+                f"Failed to update status:\n{errors[0]}",
+                show=True,
+            )
 
     def remove_from_hardcover(self):
         """Remove selected books from Hardcover library."""
+        from calibre.gui2 import error_dialog, info_dialog, question_dialog
+
+        from .matcher import get_hardcover_id
+
         book_ids = self.get_selected_book_ids()
         if not book_ids:
             return self._show_no_selection_error()
-        # TODO: Implement
-        print(f"Remove from Hardcover: {book_ids}")
+
+        api = self._get_api()
+        if not api:
+            return
+
+        db = self.gui.current_db.new_api
+
+        # Find books that are linked and in library
+        to_remove = []
+        for book_id in book_ids:
+            hc_id = get_hardcover_id(db, book_id)
+            if hc_id:
+                user_book = api.get_user_book(hc_id)
+                if user_book:
+                    title = db.field_for("title", book_id) or "Unknown"
+                    to_remove.append((book_id, user_book.id, title))
+
+        if not to_remove:
+            error_dialog(
+                self.gui,
+                "Not in Library",
+                "None of the selected books are in your Hardcover library.",
+                show=True,
+            )
+            return
+
+        # Confirm
+        if len(to_remove) == 1:
+            msg = f"Remove '{to_remove[0][2]}' from your Hardcover library?"
+        else:
+            msg = f"Remove {len(to_remove)} books from your Hardcover library?"
+
+        if not question_dialog(self.gui, "Confirm Removal", msg):
+            return
+
+        # Remove books
+        success = 0
+        for _, user_book_id, _ in to_remove:
+            try:
+                api.remove_book_from_library(user_book_id)
+                success += 1
+            except Exception:
+                pass
+
+        info_dialog(
+            self.gui,
+            "Removed",
+            f"Removed {success} book(s) from your Hardcover library.",
+            show=True,
+        )
 
     def update_progress(self):
         """Update reading progress for selected book."""
