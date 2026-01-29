@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from calibre.library.database2 import LibraryDatabase2
+    from calibre.library.database2 import LibraryDatabase2  # noqa: F401
 
 # Cache expiry time (how long before we refresh from Hardcover)
 CACHE_EXPIRY_HOURS = 24
@@ -66,14 +66,14 @@ class HardcoverCache:
 
         try:
             # Try to load from plugin data
-            from calibre.utils.serialize import json_loads
+            from calibre.utils.serialize import json_loads  # type: ignore[import-not-found]
 
             data = self._db.new_api.pref("hardcover_sync_cache", default=None)
             if data:
                 cache_data = json_loads(data)
                 self._load_isbn_cache(cache_data.get("isbn_cache", {}))
                 self._load_library_cache(cache_data.get("library_cache", {}))
-        except Exception:
+        except Exception:  # noqa: S110
             # If loading fails, start with empty cache
             pass
 
@@ -83,14 +83,15 @@ class HardcoverCache:
             return
 
         try:
-            from calibre.utils.serialize import json_dumps
+            from calibre.utils.serialize import json_dumps  # type: ignore[import-not-found]
 
             cache_data = {
                 "isbn_cache": self._serialize_isbn_cache(),
                 "library_cache": self._serialize_library_cache(),
             }
             self._db.new_api.set_pref("hardcover_sync_cache", json_dumps(cache_data))
-        except Exception:
+        except Exception:  # noqa: S110
+            # If saving fails, silently continue (cache is non-critical)
             pass
 
     def _load_isbn_cache(self, data: dict):

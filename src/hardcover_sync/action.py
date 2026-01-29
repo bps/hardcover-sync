@@ -6,6 +6,7 @@ This module defines the toolbar button and menu structure.
 
 from functools import partial
 
+# Calibre imports - only available in Calibre's runtime environment
 from calibre.gui2.actions import InterfaceAction
 from qt.core import QMenu, QToolButton
 
@@ -34,7 +35,8 @@ class HardcoverSyncAction(InterfaceAction):
         Setup the plugin. Called once when Calibre starts.
         """
         # Set the icon for this plugin
-        icon = get_icons("images/hardcover_sync.png", "Hardcover Sync")
+        # get_icons is injected by Calibre at runtime
+        icon = get_icons("images/hardcover_sync.png", "Hardcover Sync")  # type: ignore[name-defined]
         self.qaction.setIcon(icon)
 
         # Track if menu needs rebuilding
@@ -161,7 +163,7 @@ class HardcoverSyncAction(InterfaceAction):
         prefs = get_plugin_prefs()
         token = prefs.get("api_token", "")
         if not token:
-            from calibre.gui2 import error_dialog
+            from calibre.gui2 import error_dialog  # type: ignore[import-not-found]
 
             error_dialog(
                 self.gui,
@@ -193,7 +195,7 @@ class HardcoverSyncAction(InterfaceAction):
 
     def set_reading_status(self, status_id):
         """Set the reading status for selected books on Hardcover."""
-        from calibre.gui2 import error_dialog, info_dialog
+        from calibre.gui2 import error_dialog, info_dialog  # type: ignore[import-not-found]
 
         from .config import READING_STATUSES
         from .matcher import get_hardcover_id
@@ -265,7 +267,7 @@ class HardcoverSyncAction(InterfaceAction):
 
     def remove_from_hardcover(self):
         """Remove selected books from Hardcover library."""
-        from calibre.gui2 import error_dialog, info_dialog, question_dialog
+        from calibre.gui2 import error_dialog, info_dialog, question_dialog  # type: ignore[import-not-found]
 
         from .matcher import get_hardcover_id
 
@@ -376,8 +378,8 @@ class HardcoverSyncAction(InterfaceAction):
 
     def view_lists_on_hardcover(self):
         """Open Hardcover lists page in browser."""
-        from calibre.gui2 import open_url
-        from qt.core import QUrl
+        from calibre.gui2 import open_url  # type: ignore[import-not-found]
+        from qt.core import QUrl  # type: ignore[import-not-found]
 
         prefs = get_plugin_prefs()
         username = prefs.get("username", "")
@@ -389,7 +391,7 @@ class HardcoverSyncAction(InterfaceAction):
 
     def link_to_hardcover(self):
         """Link selected book to a Hardcover book."""
-        from calibre.gui2 import info_dialog
+        from calibre.gui2 import info_dialog  # type: ignore[import-not-found]
 
         book_ids = self.get_selected_book_ids()
         if not book_ids:
@@ -425,8 +427,8 @@ class HardcoverSyncAction(InterfaceAction):
 
     def view_on_hardcover(self):
         """Open selected book on Hardcover in browser."""
-        from calibre.gui2 import open_url
-        from qt.core import QUrl
+        from calibre.gui2 import open_url  # type: ignore[import-not-found]
+        from qt.core import QUrl  # type: ignore[import-not-found]
 
         book_ids = self.get_selected_book_ids()
         if not book_ids:
@@ -439,7 +441,7 @@ class HardcoverSyncAction(InterfaceAction):
         hardcover_id = identifiers.get("hardcover")
 
         if not hardcover_id:
-            from calibre.gui2 import error_dialog
+            from calibre.gui2 import error_dialog  # type: ignore[import-not-found]
 
             error_dialog(
                 self.gui,
@@ -454,7 +456,7 @@ class HardcoverSyncAction(InterfaceAction):
 
     def remove_hardcover_link(self):
         """Remove Hardcover identifier from selected books."""
-        from calibre.gui2 import error_dialog, info_dialog, question_dialog
+        from calibre.gui2 import error_dialog, info_dialog, question_dialog  # type: ignore[import-not-found]
 
         book_ids = self.get_selected_book_ids()
         if not book_ids:
@@ -509,15 +511,15 @@ class HardcoverSyncAction(InterfaceAction):
 
     def show_help(self):
         """Show help documentation."""
-        from calibre.gui2 import open_url
-        from qt.core import QUrl
+        from calibre.gui2 import open_url  # type: ignore[import-not-found]
+        from qt.core import QUrl  # type: ignore[import-not-found]
 
         # TODO: Update with actual documentation URL
         open_url(QUrl("https://github.com/brianryall/hardcover-sync"))
 
     def _show_no_selection_error(self):
         """Show error when no books are selected."""
-        from calibre.gui2 import error_dialog
+        from calibre.gui2 import error_dialog  # type: ignore[import-not-found]
 
         error_dialog(
             self.gui,

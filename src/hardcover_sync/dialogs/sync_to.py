@@ -6,6 +6,7 @@ This dialog syncs data from Calibre to Hardcover for selected books.
 
 from dataclasses import dataclass
 
+# Qt imports - only available in Calibre's runtime environment
 from qt.core import (
     QAbstractItemView,
     QApplication,

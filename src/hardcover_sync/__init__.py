@@ -5,6 +5,7 @@ This plugin allows bidirectional synchronization of reading status,
 ratings, progress, and lists between Calibre and Hardcover.app.
 """
 
+# Calibre imports - only available in Calibre's runtime environment
 from calibre.customize import InterfaceActionBase
 
 try:
@@ -51,7 +52,7 @@ class HardcoverSyncPlugin(InterfaceActionBase):
             parent: Parent widget for the dialog.
             plugin_action: The InterfaceAction instance (provides access to GUI/database).
         """
-        from qt.core import QDialog, QDialogButtonBox, QVBoxLayout
+        from qt.core import QDialog, QDialogButtonBox, QVBoxLayout  # type: ignore[import-not-found]
 
         from .config import ConfigWidget
 

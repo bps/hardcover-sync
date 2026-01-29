@@ -86,3 +86,5 @@ ignore = ["UP007"]  # Allow X | Y union syntax
 [tool.pyright]
 typeCheckingMode = "standard"
 pythonVersion = "3.10"
+# Calibre provides these modules at runtime - they're not installable packages
+reportMissingImports = false

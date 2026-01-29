@@ -6,6 +6,7 @@ This dialog fetches the user's Hardcover library and syncs data to Calibre.
 
 from dataclasses import dataclass
 
+# Qt imports - only available in Calibre's runtime environment
 from qt.core import (
     QAbstractItemView,
     QApplication,
@@ -670,7 +671,7 @@ class SyncFromHardcoverDialog(QDialog):
             self.gui.library_view.model().refresh()
 
         # Show summary dialog before closing
-        from calibre.gui2 import info_dialog
+        from calibre.gui2 import info_dialog  # type: ignore[import-not-found]
 
         if errors:
             info_dialog(

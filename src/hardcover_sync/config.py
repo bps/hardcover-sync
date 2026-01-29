@@ -7,6 +7,7 @@ This module provides:
 - ConfigWidget: QWidget for plugin configuration dialog
 """
 
+# Calibre imports - only available in Calibre's runtime environment
 from calibre.utils.config import JSONConfig
 
 # Hardcover reading status mapping
@@ -82,7 +83,7 @@ class CustomColumnComboBox:
             selected_column: Currently selected column lookup name.
             initial_items: List or dict of initial items (e.g., [""] for "Not mapped").
         """
-        from qt.core import QComboBox
+        from qt.core import QComboBox  # type: ignore[import-not-found]
 
         self.combo = QComboBox(parent)
         self.column_names = []
@@ -173,7 +174,7 @@ class ConfigWidget:
         Args:
             plugin_action: The plugin's InterfaceAction (provides access to GUI/database).
         """
-        from qt.core import QTabWidget, QVBoxLayout, QWidget
+        from qt.core import QTabWidget, QVBoxLayout, QWidget  # type: ignore[import-not-found]
 
         self.plugin_action = plugin_action
         self.widget = QWidget()
@@ -194,7 +195,7 @@ class ConfigWidget:
 
     def _create_account_tab(self):
         """Create the Account settings tab."""
-        from qt.core import (
+        from qt.core import (  # type: ignore[import-not-found]
             QGroupBox,
             QHBoxLayout,
             QLabel,
@@ -244,7 +245,7 @@ class ConfigWidget:
 
     def _create_columns_tab(self):
         """Create the Column Mappings tab."""
-        from qt.core import (
+        from qt.core import (  # type: ignore[import-not-found]
             QFormLayout,
             QGroupBox,
             QLabel,
@@ -334,7 +335,7 @@ class ConfigWidget:
 
     def _create_status_mapping_group(self, parent_layout, parent_widget):
         """Create the status value mapping section."""
-        from qt.core import QFormLayout, QGroupBox, QLabel, QLineEdit
+        from qt.core import QFormLayout, QGroupBox, QLabel, QLineEdit  # type: ignore[import-not-found]
 
         group = QGroupBox("Status Value Mapping")
         layout = QFormLayout(group)
@@ -363,7 +364,7 @@ class ConfigWidget:
 
     def _create_sync_tab(self):
         """Create the Sync Options tab."""
-        from qt.core import (
+        from qt.core import (  # type: ignore[import-not-found]
             QCheckBox,
             QComboBox,
             QFormLayout,
@@ -505,7 +506,7 @@ class ConfigWidget:
         self.status_label.setStyleSheet("color: blue;")
 
         # Force UI update
-        from qt.core import QApplication
+        from qt.core import QApplication  # type: ignore[import-not-found]
 
         QApplication.processEvents()
 
