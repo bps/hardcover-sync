@@ -4,21 +4,15 @@ Tests for the Hardcover API client.
 These tests use mocked responses to avoid actual API calls.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from hardcover_sync.api import (
     AuthenticationError,
-    Author,
-    Book,
-    Edition,
     HardcoverAPI,
     HardcoverAPIError,
-    List,
     RateLimitError,
-    User,
-    UserBook,
 )
 
 
@@ -37,7 +31,7 @@ def mock_client():
 @pytest.fixture
 def api(mock_client):
     """Create an API instance with a mocked client."""
-    return HardcoverAPI(token="test-token")
+    return HardcoverAPI(token="test-token")  # noqa: S106
 
 
 # =============================================================================
@@ -56,7 +50,6 @@ class TestGetMe:
                 "username": "testuser",
                 "name": "Test User",
                 "books_count": 42,
-                "image": "https://example.com/avatar.jpg",
             }
         }
 
@@ -66,7 +59,6 @@ class TestGetMe:
         assert user.username == "testuser"
         assert user.name == "Test User"
         assert user.books_count == 42
-        assert user.image == "https://example.com/avatar.jpg"
 
     def test_get_me_invalid_token(self, api, mock_client):
         """Test authentication error on invalid token."""
@@ -93,7 +85,7 @@ class TestValidateToken:
     def test_validate_token_valid(self, api, mock_client):
         """Test valid token validation."""
         mock_client.return_value.execute.return_value = {
-            "me": {"id": 123, "username": "testuser", "name": None, "books_count": 0, "image": None}
+            "me": {"id": 123, "username": "testuser", "name": None, "books_count": 0}
         }
 
         is_valid, user = api.validate_token()
@@ -213,24 +205,30 @@ class TestSearchBooks:
         """Test book search."""
         mock_client.return_value.execute.return_value = {
             "search": {
-                "results": [
-                    {
-                        "id": 1,
-                        "title": "The Great Gatsby",
-                        "slug": "the-great-gatsby",
-                        "release_date": "1925-04-10",
-                        "contributions": [{"author": {"id": 1, "name": "F. Scott Fitzgerald"}}],
-                        "editions": [{"id": 101, "isbn_13": "9780743273565", "isbn_10": None}],
-                    },
-                    {
-                        "id": 2,
-                        "title": "Gatsby's Girl",
-                        "slug": "gatsbys-girl",
-                        "release_date": "2010-01-01",
-                        "contributions": [{"author": {"id": 2, "name": "Someone Else"}}],
-                        "editions": [],
-                    },
-                ]
+                "results": {
+                    "hits": [
+                        {
+                            "document": {
+                                "id": 1,
+                                "title": "The Great Gatsby",
+                                "slug": "the-great-gatsby",
+                                "release_year": 1925,
+                                "author_names": ["F. Scott Fitzgerald"],
+                                "isbns": ["9780743273565"],
+                            }
+                        },
+                        {
+                            "document": {
+                                "id": 2,
+                                "title": "Gatsby's Girl",
+                                "slug": "gatsbys-girl",
+                                "release_year": 2010,
+                                "author_names": ["Someone Else"],
+                                "isbns": [],
+                            }
+                        },
+                    ]
+                }
             }
         }
 
@@ -243,7 +241,7 @@ class TestSearchBooks:
 
     def test_search_books_empty(self, api, mock_client):
         """Test search with no results."""
-        mock_client.return_value.execute.return_value = {"search": {"results": []}}
+        mock_client.return_value.execute.return_value = {"search": {"results": {"hits": []}}}
 
         books = api.search_books("xyznonexistent")
 
@@ -268,7 +266,6 @@ class TestGetUserBooks:
                     "username": "testuser",
                     "name": None,
                     "books_count": 0,
-                    "image": None,
                 }
             },
             {
@@ -279,10 +276,6 @@ class TestGetUserBooks:
                         "edition_id": 456,
                         "status_id": 3,
                         "rating": 4.5,
-                        "progress": None,
-                        "progress_pages": 100,
-                        "started_at": "2024-01-01",
-                        "finished_at": "2024-01-15",
                         "review": "Great book!",
                         "created_at": "2024-01-01T00:00:00",
                         "updated_at": "2024-01-15T00:00:00",
@@ -406,7 +399,6 @@ class TestGetUserLists:
                     "username": "testuser",
                     "name": None,
                     "books_count": 0,
-                    "image": None,
                 }
             },
             {
@@ -489,3 +481,139 @@ class TestErrorHandling:
 
         with pytest.raises(HardcoverAPIError):
             api.get_me()
+
+
+# =============================================================================
+# Dry-Run Mode Tests
+# =============================================================================
+
+
+class TestDryRunMode:
+    """Tests for dry-run mode functionality."""
+
+    @pytest.fixture
+    def dry_run_api(self, mock_client):
+        """Create an API instance in dry-run mode."""
+        return HardcoverAPI(token="test-token", dry_run=True)  # noqa: S106
+
+    def test_dry_run_add_book_to_library(self, dry_run_api, mock_client):
+        """Test that add_book_to_library is logged but not executed in dry-run mode."""
+        # Should NOT call the actual API
+        user_book = dry_run_api.add_book_to_library(book_id=123, status_id=1)
+
+        # Verify mock was NOT called
+        mock_client.return_value.execute.assert_not_called()
+
+        # Verify the returned object has placeholder data
+        assert user_book.id == -1
+        assert user_book.book_id == 123
+        assert user_book.status_id == 1
+
+        # Verify the operation was logged
+        log = dry_run_api.get_dry_run_log()
+        assert len(log) == 1
+        assert log[0]["operation"] == "add_book_to_library"
+        assert log[0]["variables"]["book_id"] == 123
+        assert log[0]["variables"]["status_id"] == 1
+
+    def test_dry_run_update_user_book(self, dry_run_api, mock_client):
+        """Test that update_user_book is logged but not executed in dry-run mode."""
+        user_book = dry_run_api.update_user_book(user_book_id=456, status_id=3, rating=5.0)
+
+        mock_client.return_value.execute.assert_not_called()
+
+        assert user_book.id == 456
+        assert user_book.status_id == 3
+        assert user_book.rating == 5.0
+
+        log = dry_run_api.get_dry_run_log()
+        assert len(log) == 1
+        assert log[0]["operation"] == "update_user_book"
+        assert log[0]["variables"]["id"] == 456
+        assert log[0]["variables"]["status_id"] == 3
+
+    def test_dry_run_remove_book_from_library(self, dry_run_api, mock_client):
+        """Test that remove_book_from_library is logged but not executed in dry-run mode."""
+        result = dry_run_api.remove_book_from_library(user_book_id=789)
+
+        mock_client.return_value.execute.assert_not_called()
+
+        # Returns True (simulated success)
+        assert result is True
+
+        log = dry_run_api.get_dry_run_log()
+        assert len(log) == 1
+        assert log[0]["operation"] == "remove_book_from_library"
+        assert log[0]["variables"]["id"] == 789
+
+    def test_dry_run_add_book_to_list(self, dry_run_api, mock_client):
+        """Test that add_book_to_list is logged but not executed in dry-run mode."""
+        list_book_id = dry_run_api.add_book_to_list(list_id=10, book_id=20)
+
+        mock_client.return_value.execute.assert_not_called()
+
+        assert list_book_id == -1
+
+        log = dry_run_api.get_dry_run_log()
+        assert len(log) == 1
+        assert log[0]["operation"] == "add_book_to_list"
+        assert log[0]["variables"]["list_id"] == 10
+        assert log[0]["variables"]["book_id"] == 20
+
+    def test_dry_run_remove_book_from_list(self, dry_run_api, mock_client):
+        """Test that remove_book_from_list is logged but not executed in dry-run mode."""
+        result = dry_run_api.remove_book_from_list(list_book_id=555)
+
+        mock_client.return_value.execute.assert_not_called()
+
+        assert result is True
+
+        log = dry_run_api.get_dry_run_log()
+        assert len(log) == 1
+        assert log[0]["operation"] == "remove_book_from_list"
+        assert log[0]["variables"]["list_book_id"] == 555
+
+    def test_dry_run_queries_still_execute(self, dry_run_api, mock_client):
+        """Test that read-only queries still execute in dry-run mode."""
+        mock_client.return_value.execute.return_value = {
+            "me": {"id": 123, "username": "testuser", "name": None, "books_count": 0}
+        }
+
+        user = dry_run_api.get_me()
+
+        # Query WAS executed
+        mock_client.return_value.execute.assert_called_once()
+        assert user.username == "testuser"
+
+        # No dry-run log for queries
+        assert dry_run_api.get_dry_run_log() == []
+
+    def test_dry_run_log_multiple_operations(self, dry_run_api, mock_client):
+        """Test that multiple operations are logged in sequence."""
+        dry_run_api.add_book_to_library(book_id=1, status_id=1)
+        dry_run_api.update_user_book(user_book_id=100, status_id=2)
+        dry_run_api.remove_book_from_library(user_book_id=100)
+
+        log = dry_run_api.get_dry_run_log()
+        assert len(log) == 3
+        assert log[0]["operation"] == "add_book_to_library"
+        assert log[1]["operation"] == "update_user_book"
+        assert log[2]["operation"] == "remove_book_from_library"
+
+    def test_clear_dry_run_log(self, dry_run_api, mock_client):
+        """Test that the dry-run log can be cleared."""
+        dry_run_api.add_book_to_library(book_id=1, status_id=1)
+        assert len(dry_run_api.get_dry_run_log()) == 1
+
+        dry_run_api.clear_dry_run_log()
+        assert len(dry_run_api.get_dry_run_log()) == 0
+
+    def test_dry_run_log_is_copy(self, dry_run_api, mock_client):
+        """Test that get_dry_run_log returns a copy, not the original list."""
+        dry_run_api.add_book_to_library(book_id=1, status_id=1)
+
+        log1 = dry_run_api.get_dry_run_log()
+        log1.clear()  # Modify the returned list
+
+        # Original should still have the entry
+        assert len(dry_run_api.get_dry_run_log()) == 1

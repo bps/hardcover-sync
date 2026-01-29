@@ -7,6 +7,7 @@ This module defines the toolbar button and menu structure.
 from functools import partial
 
 from calibre.gui2.actions import InterfaceAction
+from qt.core import QMenu, QToolButton
 
 from .config import READING_STATUSES, get_plugin_prefs
 
@@ -24,7 +25,7 @@ class HardcoverSyncAction(InterfaceAction):
         "Sync with Hardcover.app",  # Tooltip
         None,  # Keyboard shortcut
     )
-    popup_type = QToolButton.InstantPopup
+    popup_type = QToolButton.ToolButtonPopupMode.InstantPopup
     action_type = "current"
     dont_add_to_toolbar = False
 
@@ -36,12 +37,17 @@ class HardcoverSyncAction(InterfaceAction):
         icon = get_icons("images/hardcover_sync.png", "Hardcover Sync")
         self.qaction.setIcon(icon)
 
-        # Build the menu
+        # Build the menu - create it if it doesn't exist
         self.menu = self.qaction.menu()
+        if self.menu is None:
+            self.menu = QMenu(self.gui)
+            self.qaction.setMenu(self.menu)
         self.rebuild_menu()
 
-        # Connect to library change signal
-        self.gui.library_view.model().library_changed.connect(self.library_changed)
+    def initialization_complete(self):
+        """Called after GUI is fully initialized."""
+        # Future: could connect to signals here if needed
+        pass
 
     def library_changed(self, db):
         """Called when the library is changed."""
@@ -52,6 +58,17 @@ class HardcoverSyncAction(InterfaceAction):
         """Rebuild the plugin menu."""
         self.menu.clear()
         prefs = get_plugin_prefs()
+
+        # Check if API token is configured
+        token = prefs.get("api_token", "")
+        if not token:
+            # Show a minimal menu prompting configuration
+            self.menu.addAction("Configure Hardcover API token...").triggered.connect(
+                self.show_configuration
+            )
+            self.menu.addSeparator()
+            self.menu.addAction("Help").triggered.connect(self.show_help)
+            return
 
         # Set Status submenu
         if prefs.get("display_status_menu", True):
@@ -156,8 +173,8 @@ class HardcoverSyncAction(InterfaceAction):
             # Get the column label without the # prefix
             col_name = status_column.lstrip("#")
             db.set_field(f"#{col_name}", {book_id: status_name})
-        except Exception:
-            pass  # Silently fail if column update fails
+        except Exception:  # noqa: S110
+            pass  # Column update is best-effort, don't interrupt user flow
 
     def set_reading_status(self, status_id):
         """Set the reading status for selected books on Hardcover."""
@@ -281,8 +298,8 @@ class HardcoverSyncAction(InterfaceAction):
             try:
                 api.remove_book_from_library(user_book_id)
                 success += 1
-            except Exception:
-                pass
+            except Exception:  # noqa: S110
+                pass  # Continue removing other books even if one fails
 
         info_dialog(
             self.gui,
@@ -296,37 +313,51 @@ class HardcoverSyncAction(InterfaceAction):
         book_ids = self.get_selected_book_ids()
         if not book_ids:
             return self._show_no_selection_error()
-        # TODO: Implement - show dialog
-        print(f"Update progress for: {book_ids}")
+
+        from .dialogs.update_progress import UpdateProgressDialog
+
+        dialog = UpdateProgressDialog(self.gui, self, book_ids)
+        dialog.exec_()
 
     def sync_from_hardcover(self):
         """Sync data from Hardcover to Calibre."""
-        # TODO: Implement - show dialog
-        print("Sync from Hardcover")
+        from .dialogs.sync_from import SyncFromHardcoverDialog
+
+        dialog = SyncFromHardcoverDialog(self.gui, self)
+        dialog.exec_()
 
     def sync_to_hardcover(self):
         """Sync data from Calibre to Hardcover."""
         book_ids = self.get_selected_book_ids()
         if not book_ids:
             return self._show_no_selection_error()
-        # TODO: Implement - show dialog
-        print(f"Sync to Hardcover: {book_ids}")
+
+        from .dialogs.sync_to import SyncToHardcoverDialog
+
+        dialog = SyncToHardcoverDialog(self.gui, self, book_ids)
+        dialog.exec_()
 
     def add_to_list(self):
         """Add selected books to a Hardcover list."""
         book_ids = self.get_selected_book_ids()
         if not book_ids:
             return self._show_no_selection_error()
-        # TODO: Implement - show dialog
-        print(f"Add to list: {book_ids}")
+
+        from .dialogs.add_to_list import AddToListDialog
+
+        dialog = AddToListDialog(self.gui, self, book_ids)
+        dialog.exec_()
 
     def remove_from_list(self):
         """Remove selected books from a Hardcover list."""
         book_ids = self.get_selected_book_ids()
         if not book_ids:
             return self._show_no_selection_error()
-        # TODO: Implement - show dialog
-        print(f"Remove from list: {book_ids}")
+
+        from .dialogs.remove_from_list import RemoveFromListDialog
+
+        dialog = RemoveFromListDialog(self.gui, self, book_ids)
+        dialog.exec_()
 
     def view_lists_on_hardcover(self):
         """Open Hardcover lists page in browser."""
@@ -343,7 +374,7 @@ class HardcoverSyncAction(InterfaceAction):
 
     def link_to_hardcover(self):
         """Link selected book to a Hardcover book."""
-        from calibre.gui2 import error_dialog, info_dialog
+        from calibre.gui2 import info_dialog
 
         book_ids = self.get_selected_book_ids()
         if not book_ids:
@@ -457,7 +488,9 @@ class HardcoverSyncAction(InterfaceAction):
 
     def show_configuration(self):
         """Show the plugin configuration dialog."""
-        self.interface_action_base_plugin.do_user_config(self.gui)
+        if self.interface_action_base_plugin.do_user_config(self.gui, plugin_action=self):
+            # User clicked OK - rebuild menu in case token was added/changed
+            self.rebuild_menu()
 
     def show_help(self):
         """Show help documentation."""
@@ -477,10 +510,3 @@ class HardcoverSyncAction(InterfaceAction):
             "Please select one or more books first.",
             show=True,
         )
-
-
-# Import Qt widgets (needed for popup_type)
-try:
-    from qt.core import QToolButton
-except ImportError:
-    from PyQt5.Qt import QToolButton

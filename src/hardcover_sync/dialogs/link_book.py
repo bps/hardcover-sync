@@ -5,36 +5,21 @@ This dialog allows users to search for and link a Calibre book
 to a Hardcover book.
 """
 
-try:
-    from qt.core import (
-        QAbstractItemView,
-        QDialog,
-        QDialogButtonBox,
-        QHBoxLayout,
-        QHeaderView,
-        QLabel,
-        QLineEdit,
-        QPushButton,
-        QTableWidget,
-        QTableWidgetItem,
-        Qt,
-        QVBoxLayout,
-    )
-except ImportError:
-    from PyQt5.Qt import (
-        QAbstractItemView,
-        QDialog,
-        QDialogButtonBox,
-        QHBoxLayout,
-        QHeaderView,
-        QLabel,
-        QLineEdit,
-        QPushButton,
-        QTableWidget,
-        QTableWidgetItem,
-        Qt,
-        QVBoxLayout,
-    )
+from qt.core import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    Qt,
+    QVBoxLayout,
+)
 
 from ..api import Book, HardcoverAPI
 from ..config import get_plugin_prefs
@@ -106,13 +91,14 @@ class LinkBookDialog(QDialog):
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(4)
         self.results_table.setHorizontalHeaderLabels(["Title", "Author", "Year", "Match"])
-        self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.results_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.results_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        header = self.results_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.results_table.itemSelectionChanged.connect(self._on_selection_changed)
         self.results_table.itemDoubleClicked.connect(self._on_double_click)
         layout.addWidget(self.results_table)
@@ -122,11 +108,13 @@ class LinkBookDialog(QDialog):
         layout.addWidget(self.status_label)
 
         # Button box
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
-        self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
-        self.button_box.button(QDialogButtonBox.Ok).setText("Link")
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Link")
         layout.addWidget(self.button_box)
 
     def _get_api(self) -> HardcoverAPI | None:
@@ -205,7 +193,7 @@ class LinkBookDialog(QDialog):
 
             # Title
             title_item = QTableWidgetItem(book.title)
-            title_item.setData(Qt.UserRole, row)  # Store index
+            title_item.setData(Qt.ItemDataRole.UserRole, row)  # Store index
             self.results_table.setItem(row, 0, title_item)
 
             # Author
@@ -226,11 +214,11 @@ class LinkBookDialog(QDialog):
             confidence = f"{int(result.confidence * 100)}%"
             match_item = QTableWidgetItem(confidence)
             if result.confidence >= 0.8:
-                match_item.setForeground(Qt.darkGreen)
+                match_item.setForeground(Qt.GlobalColor.darkGreen)
             elif result.confidence >= 0.5:
-                match_item.setForeground(Qt.darkYellow)
+                match_item.setForeground(Qt.GlobalColor.darkYellow)
             else:
-                match_item.setForeground(Qt.darkGray)
+                match_item.setForeground(Qt.GlobalColor.darkGray)
             self.results_table.setItem(row, 3, match_item)
 
         # Auto-select first row if results exist
@@ -244,11 +232,11 @@ class LinkBookDialog(QDialog):
             row = rows[0].row()
             if 0 <= row < len(self.results):
                 self.selected_book = self.results[row].book
-                self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
+                self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
                 return
 
         self.selected_book = None
-        self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
 
     def _on_double_click(self, item):
         """Handle double-click on a result row."""
@@ -259,10 +247,6 @@ class LinkBookDialog(QDialog):
 
     def _update_ui(self):
         """Force UI update."""
-        try:
-            from qt.core import QApplication
-        except ImportError:
-            from PyQt5.Qt import QApplication
         QApplication.processEvents()
 
     def get_selected_book(self) -> Book | None:

@@ -42,7 +42,7 @@ build:
 # Build and install plugin to Calibre
 install-plugin: build
     @echo "Installing plugin..."
-    calibre-customize --add-plugin dist/hardcover-sync-*.zip
+    CALIBRE_CONFIG_DIRECTORY="{{justfile_directory()}}/.calibre/config" calibre-customize --add-plugin dist/hardcover-sync-*.zip
 
 # Launch Calibre in debug mode
 calibre *ARGS:

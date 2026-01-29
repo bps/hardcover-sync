@@ -5,15 +5,24 @@ This module provides the HardcoverAPI class for interacting with
 the Hardcover.app GraphQL API.
 """
 
+import sys
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 from typing import Any
 
-from gql import Client, gql
-from gql.transport.exceptions import TransportQueryError
-from gql.transport.requests import RequestsHTTPTransport
+# Add plugin directory to path for bundled dependencies
+# This is needed because Calibre's plugin system uses a custom namespace
+_plugin_dir = Path(__file__).parent
+if str(_plugin_dir) not in sys.path:
+    sys.path.insert(0, str(_plugin_dir))
 
-from . import queries
+from gql import Client, gql  # noqa: E402
+from gql.graphql_request import GraphQLRequest  # noqa: E402
+from gql.transport.exceptions import TransportQueryError  # noqa: E402
+from gql.transport.requests import RequestsHTTPTransport  # noqa: E402
+
+from . import queries  # noqa: E402
 
 # API Configuration
 API_URL = "https://api.hardcover.app/v1/graphql"
@@ -119,20 +128,27 @@ class HardcoverAPI:
         api = HardcoverAPI(token="your-api-token")
         user = api.get_me()
         print(f"Logged in as @{user.username}")
+
+    Dry-run mode:
+        api = HardcoverAPI(token="your-api-token", dry_run=True)
+        # Mutations will be logged but not executed
     """
 
-    def __init__(self, token: str, timeout: int = DEFAULT_TIMEOUT):
+    def __init__(self, token: str, timeout: int = DEFAULT_TIMEOUT, dry_run: bool = False):
         """
         Initialize the API client.
 
         Args:
             token: The Hardcover API token.
             timeout: Request timeout in seconds (default 30).
+            dry_run: If True, mutations are logged but not executed.
         """
         self.token = token
         self.timeout = timeout
+        self.dry_run = dry_run
         self._client: Client | None = None
         self._user: User | None = None
+        self._dry_run_log: list[dict] = []  # Log of operations that would have been performed
 
     @property
     def client(self) -> Client:
@@ -163,7 +179,8 @@ class HardcoverAPI:
             HardcoverAPIError: For other API errors.
         """
         try:
-            result = self.client.execute(gql(query), variable_values=variables)
+            request = GraphQLRequest(gql(query), variable_values=variables)
+            result = self.client.execute(request)
             return result
         except TransportQueryError as e:
             error_msg = str(e)
@@ -174,6 +191,52 @@ class HardcoverAPI:
             raise HardcoverAPIError(f"API error: {error_msg}") from e
         except Exception as e:
             raise HardcoverAPIError(f"Request failed: {e}") from e
+
+    def _execute_mutation(
+        self,
+        mutation: str,
+        variables: dict[str, Any],
+        operation_name: str,
+        dry_run_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Execute a GraphQL mutation with dry-run support.
+
+        In dry-run mode, the mutation is logged but not executed.
+
+        Args:
+            mutation: The GraphQL mutation string.
+            variables: Mutation variables.
+            operation_name: Human-readable name for logging.
+            dry_run_result: Mock result to return in dry-run mode.
+
+        Returns:
+            The mutation result (real or mocked).
+        """
+        if self.dry_run:
+            self._dry_run_log.append(
+                {
+                    "operation": operation_name,
+                    "variables": variables,
+                    "would_execute": mutation[:100] + "..." if len(mutation) > 100 else mutation,
+                }
+            )
+            return dry_run_result
+
+        return self._execute(mutation, variables)
+
+    def get_dry_run_log(self) -> list[dict]:
+        """
+        Get the log of operations that would have been performed in dry-run mode.
+
+        Returns:
+            List of operation dictionaries with keys: operation, variables, would_execute
+        """
+        return self._dry_run_log.copy()
+
+    def clear_dry_run_log(self):
+        """Clear the dry-run log."""
+        self._dry_run_log = []
 
     # =========================================================================
     # User Methods
@@ -194,12 +257,17 @@ class HardcoverAPI:
         if not me:
             raise AuthenticationError("Could not fetch user information")
 
+        # Handle case where 'me' is returned as a list (API schema variation)
+        if isinstance(me, list):
+            if not me:
+                raise AuthenticationError("Could not fetch user information")
+            me = me[0]
+
         self._user = User(
             id=me["id"],
             username=me["username"],
             name=me.get("name"),
             books_count=me.get("books_count", 0),
-            image=me.get("image"),
         )
         return self._user
 
@@ -280,36 +348,64 @@ class HardcoverAPI:
         Returns:
             List of matching Book objects.
         """
+        import json
+
         result = self._execute(queries.BOOK_SEARCH_QUERY, {"query": query})
-        search_results = result.get("search", {}).get("results", [])
+        search_data = result.get("search", {}).get("results", {})
+
+        # Handle Typesense response structure: results is a dict with 'hits' array
+        # Each hit has a 'document' containing the actual book data
+        if isinstance(search_data, dict):
+            hits = search_data.get("hits", [])
+            search_results = [hit.get("document", {}) for hit in hits]
+        elif isinstance(search_data, list):
+            # Fallback for legacy format where results was a list
+            search_results = search_data
+        else:
+            search_results = []
 
         books = []
         for item in search_results:
             if not item:  # Skip null results
                 continue
 
-            authors = []
-            for contrib in item.get("contributions", []):
-                author_data = contrib.get("author", {})
-                if author_data:
-                    authors.append(Author(id=author_data["id"], name=author_data["name"]))
+            # Handle case where results come back as JSON strings (JSONB serialization)
+            if isinstance(item, str):
+                try:
+                    item = json.loads(item)
+                except json.JSONDecodeError:
+                    continue
 
+            # Typesense returns author_names as an array of strings
+            authors = []
+            author_names = item.get("author_names", [])
+            if author_names:
+                for idx, name in enumerate(author_names):
+                    # Use negative IDs since we don't have real author IDs from search
+                    authors.append(Author(id=-(idx + 1), name=name))
+
+            # Typesense returns isbns as an array of strings
             editions = []
-            for ed in item.get("editions", []):
-                editions.append(
-                    Edition(
-                        id=ed["id"],
-                        isbn_13=ed.get("isbn_13"),
-                        isbn_10=ed.get("isbn_10"),
-                    )
-                )
+            isbns = item.get("isbns", [])
+            if isbns:
+                for idx, isbn in enumerate(isbns):
+                    # Determine if it's ISBN-10 or ISBN-13 based on length
+                    clean_isbn = isbn.replace("-", "")
+                    if len(clean_isbn) == 13:
+                        editions.append(Edition(id=-(idx + 1), isbn_13=clean_isbn))
+                    elif len(clean_isbn) == 10:
+                        editions.append(Edition(id=-(idx + 1), isbn_10=clean_isbn))
+
+            # release_year is returned as an integer (e.g., 2020)
+            release_year = item.get("release_year")
+            release_date = str(release_year) if release_year else None
 
             books.append(
                 Book(
-                    id=item["id"],
+                    id=int(item["id"]),
                     title=item["title"],
                     slug=item.get("slug"),
-                    release_date=item.get("release_date"),
+                    release_date=release_date,
                     authors=authors,
                     editions=editions,
                 )
@@ -531,7 +627,20 @@ class HardcoverAPI:
         if review is not None:
             variables["review"] = review
 
-        result = self._execute(queries.INSERT_USER_BOOK_MUTATION, variables)
+        result = self._execute_mutation(
+            queries.INSERT_USER_BOOK_MUTATION,
+            variables,
+            operation_name="add_book_to_library",
+            dry_run_result={
+                "insert_user_book": {
+                    "id": -1,
+                    "book_id": book_id,
+                    "status_id": status_id,
+                    "rating": rating,
+                    "updated_at": None,
+                }
+            },
+        )
         ub = result.get("insert_user_book", {})
 
         return UserBook(
@@ -586,7 +695,24 @@ class HardcoverAPI:
         if review is not None:
             variables["review"] = review
 
-        result = self._execute(queries.UPDATE_USER_BOOK_MUTATION, variables)
+        result = self._execute_mutation(
+            queries.UPDATE_USER_BOOK_MUTATION,
+            variables,
+            operation_name="update_user_book",
+            dry_run_result={
+                "update_user_book": {
+                    "returning": [
+                        {
+                            "id": user_book_id,
+                            "book_id": -1,
+                            "status_id": status_id,
+                            "rating": rating,
+                            "updated_at": None,
+                        }
+                    ]
+                }
+            },
+        )
         returning = result.get("update_user_book", {}).get("returning", [])
 
         if not returning:
@@ -611,7 +737,12 @@ class HardcoverAPI:
         Returns:
             True if successful.
         """
-        result = self._execute(queries.DELETE_USER_BOOK_MUTATION, {"id": user_book_id})
+        result = self._execute_mutation(
+            queries.DELETE_USER_BOOK_MUTATION,
+            {"id": user_book_id},
+            operation_name="remove_book_from_library",
+            dry_run_result={"delete_user_book": {"affected_rows": 1}},
+        )
         affected = result.get("delete_user_book", {}).get("affected_rows", 0)
         return affected > 0
 
@@ -696,9 +827,11 @@ class HardcoverAPI:
         Returns:
             The list_book ID.
         """
-        result = self._execute(
+        result = self._execute_mutation(
             queries.ADD_BOOK_TO_LIST_MUTATION,
             {"list_id": list_id, "book_id": book_id},
+            operation_name="add_book_to_list",
+            dry_run_result={"insert_list_book": {"id": -1}},
         )
         return result.get("insert_list_book", {}).get("id")
 
@@ -712,9 +845,11 @@ class HardcoverAPI:
         Returns:
             True if successful.
         """
-        result = self._execute(
+        result = self._execute_mutation(
             queries.REMOVE_BOOK_FROM_LIST_MUTATION,
             {"list_book_id": list_book_id},
+            operation_name="remove_book_from_list",
+            dry_run_result={"delete_list_book": {"affected_rows": 1}},
         )
         affected = result.get("delete_list_book", {}).get("affected_rows", 0)
         return affected > 0

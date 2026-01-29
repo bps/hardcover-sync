@@ -33,7 +33,7 @@ trap "rm -rf $BUILD_DIR" EXIT
 
 # Install package with dependencies (excluding dev deps)
 echo "Installing package to build directory..."
-uv pip install . --target "$BUILD_DIR" --quiet
+uv pip install . --target "$BUILD_DIR" --quiet --reinstall-package hardcover-sync
 
 # Move plugin package contents to root of build directory
 # Calibre expects plugin files at the root of the zip
@@ -43,6 +43,10 @@ if [[ -d "$BUILD_DIR/$PACKAGE_NAME" ]]; then
 	mv "$BUILD_DIR/$PACKAGE_NAME"/* "$BUILD_DIR/"
 	rmdir "$BUILD_DIR/$PACKAGE_NAME"
 fi
+
+# Create plugin-import-name file for Calibre's plugin loader
+# This tells Calibre what module name to use for the plugin
+touch "$BUILD_DIR/plugin-import-name-$PACKAGE_NAME.txt"
 
 # Copy images directory if not already present
 if [[ -d "src/$PACKAGE_NAME/images" ]] && [[ ! -d "$BUILD_DIR/images" ]]; then
@@ -57,6 +61,7 @@ find "$BUILD_DIR" -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || tr
 find "$BUILD_DIR" -type f -name "*.pyc" -delete 2>/dev/null || true
 find "$BUILD_DIR" -type f -name "*.pyo" -delete 2>/dev/null || true
 rm -rf "$BUILD_DIR/bin" 2>/dev/null || true
+rm -f "$BUILD_DIR/.lock" 2>/dev/null || true
 
 # Create dist directory
 mkdir -p "$PROJECT_DIR/dist"

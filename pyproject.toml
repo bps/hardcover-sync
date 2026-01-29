@@ -8,17 +8,17 @@ dynamic = ["version"]
 description = "Hardcover.app Sync Plugin for Calibre"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
-requires-python = ">=3.9"
-authors = [{ name = "Brian Ryall" }]
+requires-python = ">=3.10"
+authors = [{ name = "Brian Smyth" }]
 keywords = ["calibre", "plugin", "hardcover", "books", "reading"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Other/Nonlisted Topic",
 ]
 dependencies = [
@@ -50,7 +50,7 @@ distance-dirty = "{base_version}.dev{distance}+{vcs}{rev}.dirty"
 file = "src/hardcover_sync/_version.py"
 template = """
 __version__ = "{version}"
-__version_tuple__ = {version_tuple!r}
+__version_tuple__ = {version_tuple}
 """
 
 [dependency-groups]
@@ -85,4 +85,4 @@ ignore = ["UP007"]  # Allow X | Y union syntax
 
 [tool.pyright]
 typeCheckingMode = "standard"
-pythonVersion = "3.9"
+pythonVersion = "3.10"

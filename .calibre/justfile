@@ -34,7 +34,8 @@ library:
 
     echo "Creating sample Calibre library..."
     mkdir -p library
-    calibredb --with-library=library add --empty
+    # Create a minimal metadata.db - Calibre will initialize it properly on first run
+    python3 -c 'import sqlite3; db = sqlite3.connect("library/metadata.db"); db.execute("CREATE TABLE IF NOT EXISTS library_id (id INTEGER PRIMARY KEY, uuid TEXT)"); db.execute("INSERT OR IGNORE INTO library_id (id, uuid) VALUES (1, lower(hex(randomblob(16))))"); db.commit(); db.close()'
     echo "Sample library created at .calibre/library"
 
 # Run Calibre with isolated config

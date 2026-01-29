@@ -20,7 +20,6 @@ query Me {
         username
         name
         books_count
-        image
     }
 }
 """
@@ -76,25 +75,7 @@ query BookByISBN10($isbn: String!) {
 BOOK_SEARCH_QUERY = """
 query SearchBooks($query: String!) {
     search(query: $query, query_type: "Book", per_page: 20) {
-        results {
-            ... on Book {
-                id
-                title
-                slug
-                release_date
-                contributions {
-                    author {
-                        id
-                        name
-                    }
-                }
-                editions {
-                    id
-                    isbn_13
-                    isbn_10
-                }
-            }
-        }
+        results
     }
 }
 """
@@ -140,10 +121,6 @@ query UserBooks($user_id: Int!, $limit: Int!, $offset: Int!) {
         edition_id
         status_id
         rating
-        progress
-        progress_pages
-        started_at
-        finished_at
         review
         created_at
         updated_at
@@ -183,10 +160,6 @@ query UserBookByBookId($user_id: Int!, $book_id: Int!) {
         edition_id
         status_id
         rating
-        progress
-        progress_pages
-        started_at
-        finished_at
         review
         created_at
         updated_at
