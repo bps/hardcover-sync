@@ -605,7 +605,6 @@ class SyncToHardcoverDialog(QDialog):
 
             # Calibre value (new)
             new_item = QTableWidgetItem(change.new_value or "")
-            new_item.setForeground(Qt.GlobalColor.darkGreen)
             self.changes_table.setItem(row, 4, new_item)
 
     def _on_checkbox_changed(self, row: int, state: int):

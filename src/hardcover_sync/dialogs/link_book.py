@@ -213,12 +213,6 @@ class LinkBookDialog(QDialog):
             # Match confidence
             confidence = f"{int(result.confidence * 100)}%"
             match_item = QTableWidgetItem(confidence)
-            if result.confidence >= 0.8:
-                match_item.setForeground(Qt.GlobalColor.darkGreen)
-            elif result.confidence >= 0.5:
-                match_item.setForeground(Qt.GlobalColor.darkYellow)
-            else:
-                match_item.setForeground(Qt.GlobalColor.darkGray)
             self.results_table.setItem(row, 3, match_item)
 
         # Auto-select first row if results exist

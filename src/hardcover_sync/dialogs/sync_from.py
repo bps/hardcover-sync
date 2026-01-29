@@ -707,11 +707,10 @@ class SyncFromHardcoverDialog(QDialog):
             new_books_header.setCheckState(0, Qt.CheckState.Checked)
             new_books_header.setData(0, Qt.ItemDataRole.UserRole, ("new_books_header", None))
 
-            # Make header bold and colored
+            # Make header bold
             font = new_books_header.font(0)
             font.setBold(True)
             new_books_header.setFont(0, font)
-            new_books_header.setForeground(0, Qt.GlobalColor.darkBlue)
 
             for new_book in self.new_books:
                 book_item = QTreeWidgetItem(new_books_header)
@@ -723,7 +722,6 @@ class SyncFromHardcoverDialog(QDialog):
                     0, Qt.CheckState.Checked if new_book.apply else Qt.CheckState.Unchecked
                 )
                 book_item.setData(0, Qt.ItemDataRole.UserRole, ("new_book", new_book))
-                book_item.setForeground(2, Qt.GlobalColor.darkGreen)
 
             self.changes_tree.addTopLevelItem(new_books_header)
 
@@ -745,7 +743,6 @@ class SyncFromHardcoverDialog(QDialog):
             font = updates_header.font(0)
             font.setBold(True)
             updates_header.setFont(0, font)
-            updates_header.setForeground(0, Qt.GlobalColor.darkBlue)
 
             # Sort books by title
             sorted_books = sorted(books.items(), key=lambda x: x[1][0].calibre_title.lower())
@@ -780,9 +777,6 @@ class SyncFromHardcoverDialog(QDialog):
                         0, Qt.CheckState.Checked if change.apply else Qt.CheckState.Unchecked
                     )
                     change_item.setData(0, Qt.ItemDataRole.UserRole, ("change", change))
-
-                    # Color the new value green
-                    change_item.setForeground(2, Qt.GlobalColor.darkGreen)
 
             self.changes_tree.addTopLevelItem(updates_header)
 
