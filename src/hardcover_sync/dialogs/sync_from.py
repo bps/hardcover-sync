@@ -12,6 +12,7 @@ from qt.core import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -77,9 +78,11 @@ class SyncFromHardcoverDialog(QDialog):
 
         self.setWindowTitle("Sync from Hardcover")
         self.setMinimumWidth(800)
-        self.setMinimumHeight(500)
+        self.setMinimumHeight(600)
 
         self._setup_ui()
+        # Show diagnostic info immediately
+        self._update_diagnostics()
 
     def _setup_ui(self):
         """Setup the dialog UI."""
@@ -87,11 +90,14 @@ class SyncFromHardcoverDialog(QDialog):
 
         # Header
         header = QLabel(
-            "This will sync your Hardcover library data to Calibre. "
-            "Only books that are already linked (via Hardcover identifier) will be synced."
+            "Sync your reading data from Hardcover to Calibre. "
+            "Books must be linked via the 'hardcover' identifier to be synced."
         )
         header.setWordWrap(True)
         layout.addWidget(header)
+
+        # Diagnostics panel
+        self._setup_diagnostics_panel(layout)
 
         # Progress bar (hidden initially)
         self.progress_bar = QProgressBar()
@@ -99,7 +105,8 @@ class SyncFromHardcoverDialog(QDialog):
         layout.addWidget(self.progress_bar)
 
         # Status label
-        self.status_label = QLabel("Click 'Fetch Library' to load your Hardcover books.")
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
         # Fetch button
@@ -149,6 +156,113 @@ class SyncFromHardcoverDialog(QDialog):
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
         layout.addWidget(self.button_box)
 
+    def _setup_diagnostics_panel(self, layout):
+        """Setup the diagnostics info panel."""
+        # Frame for diagnostics
+        diag_frame = QFrame()
+        diag_frame.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Sunken)
+        diag_layout = QVBoxLayout(diag_frame)
+        diag_layout.setContentsMargins(8, 8, 8, 8)
+
+        # Library status
+        self.library_status_label = QLabel()
+        self.library_status_label.setWordWrap(True)
+        diag_layout.addWidget(self.library_status_label)
+
+        # Column mapping status
+        self.column_status_label = QLabel()
+        self.column_status_label.setWordWrap(True)
+        diag_layout.addWidget(self.column_status_label)
+
+        # Warnings
+        self.warnings_label = QLabel()
+        self.warnings_label.setWordWrap(True)
+        self.warnings_label.setStyleSheet("color: #b35900;")  # Orange/warning color
+        diag_layout.addWidget(self.warnings_label)
+
+        layout.addWidget(diag_frame)
+
+    def _update_diagnostics(self):
+        """Update the diagnostics panel with current status."""
+        # Count linked books
+        linked_count = 0
+        total_count = len(self.db.all_book_ids())
+
+        for book_id in self.db.all_book_ids():
+            identifiers = self.db.field_for("identifiers", book_id) or {}
+            if identifiers.get("hardcover"):
+                linked_count += 1
+
+        if linked_count == 0:
+            self.library_status_label.setText(
+                f"<b>Library:</b> {total_count} books in Calibre, "
+                f"<span style='color: red;'><b>0 linked to Hardcover</b></span><br>"
+                "<i>Use 'Link to Hardcover...' to connect books first.</i>"
+            )
+        else:
+            self.library_status_label.setText(
+                f"<b>Library:</b> {total_count} books in Calibre, "
+                f"<b>{linked_count} linked to Hardcover</b>"
+            )
+
+        # Column mapping status
+        mappings = []
+        unmapped = []
+
+        columns = [
+            ("status_column", "Status"),
+            ("rating_column", "Rating"),
+            ("progress_column", "Progress"),
+            ("date_started_column", "Date Started"),
+            ("date_read_column", "Date Read"),
+            ("review_column", "Review"),
+        ]
+
+        for pref_key, display_name in columns:
+            col = self.prefs.get(pref_key, "")
+            if col:
+                mappings.append(f"{display_name} → {col}")
+            else:
+                unmapped.append(display_name)
+
+        if mappings:
+            self.column_status_label.setText(f"<b>Mapped columns:</b> {', '.join(mappings)}")
+        else:
+            self.column_status_label.setText(
+                "<b>Mapped columns:</b> <span style='color: red;'>None</span>"
+            )
+
+        # Warnings
+        warnings = []
+        if linked_count == 0:
+            warnings.append("No books are linked to Hardcover - nothing can be synced.")
+        if unmapped:
+            warnings.append(f"Unmapped fields will be skipped: {', '.join(unmapped)}")
+        if not self.prefs.get("api_token"):
+            warnings.append("No API token configured!")
+
+        if warnings:
+            self.warnings_label.setText("⚠ " + " | ".join(warnings))
+            self.warnings_label.setVisible(True)
+        else:
+            self.warnings_label.setVisible(False)
+
+        # Update status message
+        if linked_count == 0:
+            self.status_label.setText(
+                "No books are linked to Hardcover. Link books first using "
+                "'Link to Hardcover...' before syncing."
+            )
+            self.fetch_button.setEnabled(False)
+        elif not self.prefs.get("api_token"):
+            self.status_label.setText(
+                "No API token configured. Go to plugin settings to add your token."
+            )
+            self.fetch_button.setEnabled(False)
+        else:
+            self.status_label.setText("Click 'Fetch Library' to load your Hardcover books.")
+            self.fetch_button.setEnabled(True)
+
     def _get_api(self) -> HardcoverAPI | None:
         """Get an API instance with the configured token."""
         token = self.prefs.get("api_token", "")
@@ -174,28 +288,56 @@ class SyncFromHardcoverDialog(QDialog):
         try:
             # Fetch all books from Hardcover
             self.hardcover_books = self._fetch_all_books(api)
+
+            # Build the map first so we can report on it
+            hc_to_calibre = self._build_hardcover_to_calibre_map()
+            matched_count = sum(1 for hb in self.hardcover_books if hb.book_id in hc_to_calibre)
+
             self.status_label.setText(
-                f"Fetched {len(self.hardcover_books)} books from Hardcover. Analyzing changes..."
+                f"Fetched {len(self.hardcover_books)} books from Hardcover. "
+                f"{matched_count} match linked Calibre books. Analyzing changes..."
             )
             QApplication.processEvents()
 
             # Find changes
-            self.changes = self._find_changes()
+            self.changes = self._find_changes(hc_to_calibre)
             self._populate_changes_table()
 
             # Update UI
             self.progress_bar.setVisible(False)
             self.select_all_checkbox.setEnabled(True)
-            self.button_box.button(QDialogButtonBox.Ok).setEnabled(len(self.changes) > 0)
+            self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(
+                len(self.changes) > 0
+            )
             self._update_summary()
 
+            # Detailed status message
             if not self.changes:
-                self.status_label.setText(
-                    f"Fetched {len(self.hardcover_books)} books. No changes to sync."
-                )
+                if matched_count == 0:
+                    self.status_label.setText(
+                        f"Fetched {len(self.hardcover_books)} books from Hardcover, "
+                        "but none match your linked Calibre books. "
+                        "Make sure books are linked using 'Link to Hardcover...'."
+                    )
+                else:
+                    # Check if columns are mapped
+                    unmapped = self._get_unmapped_columns()
+                    if len(unmapped) == 6:  # All unmapped
+                        self.status_label.setText(
+                            f"Fetched {len(self.hardcover_books)} books, "
+                            f"{matched_count} matched. <b>No columns are mapped!</b> "
+                            "Go to plugin settings to map Calibre columns to Hardcover fields."
+                        )
+                    else:
+                        self.status_label.setText(
+                            f"Fetched {len(self.hardcover_books)} books, "
+                            f"{matched_count} matched. No changes needed - "
+                            "Calibre is already in sync with Hardcover."
+                        )
             else:
                 self.status_label.setText(
-                    f"Found {len(self.changes)} change(s) to sync from {len(self.hardcover_books)} Hardcover books."
+                    f"Found {len(self.changes)} change(s) from {matched_count} matched books "
+                    f"(out of {len(self.hardcover_books)} in your Hardcover library)."
                 )
 
         except Exception as e:
@@ -203,6 +345,22 @@ class SyncFromHardcoverDialog(QDialog):
             self.progress_bar.setVisible(False)
         finally:
             self.fetch_button.setEnabled(True)
+
+    def _get_unmapped_columns(self) -> list[str]:
+        """Get list of unmapped column names."""
+        unmapped = []
+        columns = [
+            ("status_column", "Status"),
+            ("rating_column", "Rating"),
+            ("progress_column", "Progress"),
+            ("date_started_column", "Date Started"),
+            ("date_read_column", "Date Read"),
+            ("review_column", "Review"),
+        ]
+        for pref_key, display_name in columns:
+            if not self.prefs.get(pref_key, ""):
+                unmapped.append(display_name)
+        return unmapped
 
     def _fetch_all_books(self, api: HardcoverAPI) -> list[UserBook]:
         """Fetch all books from the user's Hardcover library."""
@@ -222,7 +380,7 @@ class SyncFromHardcoverDialog(QDialog):
 
         return all_books
 
-    def _find_changes(self) -> list[SyncChange]:
+    def _find_changes(self, hc_to_calibre: dict[int, int] | None = None) -> list[SyncChange]:
         """Find all changes between Hardcover and Calibre."""
         changes = []
 
@@ -244,7 +402,8 @@ class SyncFromHardcoverDialog(QDialog):
         status_mappings = self.prefs.get("status_mappings", {})
 
         # Build a map of Hardcover book ID -> Calibre book ID
-        hc_to_calibre = self._build_hardcover_to_calibre_map()
+        if hc_to_calibre is None:
+            hc_to_calibre = self._build_hardcover_to_calibre_map()
 
         for hc_book in self.hardcover_books:
             calibre_id = hc_to_calibre.get(hc_book.book_id)
@@ -417,18 +576,18 @@ class SyncFromHardcoverDialog(QDialog):
 
             # New value
             new_item = QTableWidgetItem(change.new_value or "")
-            new_item.setForeground(Qt.darkGreen)
+            new_item.setForeground(Qt.GlobalColor.darkGreen)
             self.changes_table.setItem(row, 4, new_item)
 
     def _on_checkbox_changed(self, row: int, state: int):
         """Handle checkbox state change."""
         if 0 <= row < len(self.changes):
-            self.changes[row].apply = state == Qt.Checked
+            self.changes[row].apply = state == Qt.CheckState.Checked.value
             self._update_summary()
 
     def _on_select_all_changed(self, state: int):
         """Handle select all checkbox."""
-        checked = state == Qt.Checked
+        checked = state == Qt.CheckState.Checked.value
         for row, change in enumerate(self.changes):
             change.apply = checked
             checkbox = self.changes_table.cellWidget(row, 0)
@@ -443,7 +602,7 @@ class SyncFromHardcoverDialog(QDialog):
         selected = sum(1 for c in self.changes if c.apply)
         total = len(self.changes)
         self.summary_label.setText(f"<b>{selected}</b> of {total} changes selected to apply.")
-        self.button_box.button(QDialogButtonBox.Ok).setEnabled(selected > 0)
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(selected > 0)
 
     def _on_apply(self):
         """Apply the selected changes."""
@@ -452,8 +611,8 @@ class SyncFromHardcoverDialog(QDialog):
             self.reject()
             return
 
-        self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
-        self.button_box.button(QDialogButtonBox.Cancel).setEnabled(False)
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
+        self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setEnabled(False)
         self.status_label.setText("Applying changes...")
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, len(changes_to_apply))
@@ -461,43 +620,103 @@ class SyncFromHardcoverDialog(QDialog):
         QApplication.processEvents()
 
         applied = 0
-        errors = 0
+        skipped = 0
+        errors = []
 
         for i, change in enumerate(changes_to_apply):
             try:
-                self._apply_change(change)
-                applied += 1
+                success, error_msg = self._apply_change(change)
+                if success:
+                    applied += 1
+                else:
+                    skipped += 1
+                    if error_msg:
+                        errors.append(f"{change.calibre_title}: {error_msg}")
             except Exception as e:
-                errors += 1
-                print(f"Error applying change: {e}")
+                errors.append(f"{change.calibre_title}: {e}")
 
             self.progress_bar.setValue(i + 1)
             QApplication.processEvents()
 
         self.progress_bar.setVisible(False)
-        self.status_label.setText(f"Applied {applied} changes. {errors} errors.")
 
-        # Refresh the library view
-        self.gui.library_view.model().refresh()
+        # Build result message
+        result_parts = []
+        if applied > 0:
+            result_parts.append(f"Applied {applied} change(s)")
+        if skipped > 0:
+            result_parts.append(f"Skipped {skipped}")
+        if errors:
+            result_parts.append(f"{len(errors)} error(s)")
+
+        result_msg = ". ".join(result_parts) + "."
+
+        if errors:
+            # Show first few errors
+            error_preview = "; ".join(errors[:3])
+            if len(errors) > 3:
+                error_preview += f" (+{len(errors) - 3} more)"
+            result_msg += f"\nErrors: {error_preview}"
+
+        self.status_label.setText(result_msg)
+
+        if applied > 0:
+            # Refresh the library view
+            self.gui.library_view.model().refresh()
+
+        # Show summary dialog before closing
+        from calibre.gui2 import info_dialog
+
+        if errors:
+            info_dialog(
+                self,
+                "Sync Complete (with errors)",
+                f"Applied {applied} change(s), skipped {skipped}, {len(errors)} error(s).\n\n"
+                f"Errors:\n" + "\n".join(errors[:10]),
+                show=True,
+            )
+        elif applied > 0:
+            info_dialog(
+                self,
+                "Sync Complete",
+                f"Successfully applied {applied} change(s) to your Calibre library.",
+                show=True,
+            )
+        else:
+            info_dialog(
+                self,
+                "No Changes Applied",
+                "No changes were applied. This may be because columns are not mapped "
+                "in the plugin settings.",
+                show=True,
+            )
 
         self.accept()
 
-    def _apply_change(self, change: SyncChange):
-        """Apply a single change to Calibre."""
+    def _apply_change(self, change: SyncChange) -> tuple[bool, str | None]:
+        """
+        Apply a single change to Calibre.
+
+        Returns:
+            Tuple of (success, error_message).
+        """
         column = self._get_column_for_field(change.field)
         if not column:
-            return
+            return False, f"No column mapped for {change.display_field}"
 
         value = change.new_value
 
-        # Handle different column types
-        if column == "rating":
-            # Built-in rating
-            self.db.set_field("rating", {change.calibre_id: int(value) if value else None})
-        elif column.startswith("#"):
-            # Custom column - need to determine type
-            col_info = self.db.custom_field_metadata(column)
-            if col_info:
+        try:
+            # Handle different column types
+            if column == "rating":
+                # Built-in rating
+                self.db.set_field("rating", {change.calibre_id: int(value) if value else None})
+            elif column.startswith("#"):
+                # Custom column - need to determine type
+                col_info = self.db.custom_field_metadata(column)
+                if not col_info:
+                    return False, f"Column {column} not found"
+
                 datatype = col_info.get("datatype")
                 if datatype == "int":
                     value = int(value) if value else None
@@ -514,9 +733,14 @@ class SyncFromHardcoverDialog(QDialog):
                 elif datatype == "rating":
                     value = int(float(value) * 2) if value else None
 
-            self.db.set_field(column, {change.calibre_id: value})
-        else:
-            self.db.set_field(column, {change.calibre_id: value})
+                self.db.set_field(column, {change.calibre_id: value})
+            else:
+                self.db.set_field(column, {change.calibre_id: value})
+
+            return True, None
+
+        except Exception as e:
+            return False, str(e)
 
     def _get_column_for_field(self, field: str) -> str | None:
         """Get the Calibre column name for a sync field."""
