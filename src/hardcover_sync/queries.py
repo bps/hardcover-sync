@@ -142,6 +142,13 @@ query UserBooks($user_id: Int!, $limit: Int!, $offset: Int!) {
             title
             pages
         }
+        user_book_reads(order_by: {started_at: desc}) {
+            id
+            started_at
+            finished_at
+            progress_pages
+            edition_id
+        }
     }
 }
 """
@@ -163,6 +170,13 @@ query UserBookByBookId($user_id: Int!, $book_id: Int!) {
         review
         created_at
         updated_at
+        user_book_reads(order_by: {started_at: desc}) {
+            id
+            started_at
+            finished_at
+            progress_pages
+            edition_id
+        }
     }
 }
 """

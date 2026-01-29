@@ -205,15 +205,18 @@ class SyncFromHardcoverDialog(QDialog):
                 f"<b>{linked_count} linked to Hardcover</b>"
             )
 
-        # Column mapping status - note which fields the API actually supports
+        # Column mapping status - all fields are now supported via user_book_reads
         mappings = []
         unmapped = []
 
-        # Fields that the Hardcover API actually returns
+        # All syncable fields
         supported_columns = [
             ("status_column", "Status"),
             ("rating_column", "Rating"),
             ("review_column", "Review"),
+            ("progress_column", "Progress"),
+            ("date_started_column", "Date Started"),
+            ("date_read_column", "Date Read"),
         ]
 
         for pref_key, display_name in supported_columns:
@@ -345,13 +348,16 @@ class SyncFromHardcoverDialog(QDialog):
             self.fetch_button.setEnabled(True)
 
     def _get_unmapped_columns(self) -> list[str]:
-        """Get list of unmapped column names (only for API-supported fields)."""
+        """Get list of unmapped column names."""
         unmapped = []
-        # Only check fields that the Hardcover API actually returns
+        # All syncable fields
         columns = [
             ("status_column", "Status"),
             ("rating_column", "Rating"),
             ("review_column", "Review"),
+            ("progress_column", "Progress"),
+            ("date_started_column", "Date Started"),
+            ("date_read_column", "Date Read"),
         ]
         for pref_key, display_name in columns:
             if not self.prefs.get(pref_key, ""):
@@ -447,10 +453,11 @@ class SyncFromHardcoverDialog(QDialog):
                         )
                     )
 
-            # Check progress
-            if sync_progress and progress_col and hc_book.progress_pages is not None:
+            # Check progress (from latest read)
+            current_progress = hc_book.current_progress_pages
+            if sync_progress and progress_col and current_progress is not None:
                 current = self._get_calibre_value(calibre_id, progress_col)
-                new_progress = str(hc_book.progress_pages)
+                new_progress = str(current_progress)
                 if str(current) != new_progress:
                     changes.append(
                         SyncChange(
@@ -463,11 +470,12 @@ class SyncFromHardcoverDialog(QDialog):
                         )
                     )
 
-            # Check date started
-            if sync_dates and date_started_col and hc_book.started_at:
+            # Check date started (from latest read)
+            latest_started = hc_book.latest_started_at
+            if sync_dates and date_started_col and latest_started:
                 current = self._get_calibre_value(calibre_id, date_started_col)
                 current_str = str(current)[:10] if current else ""
-                new_date = hc_book.started_at[:10]  # YYYY-MM-DD
+                new_date = latest_started[:10]  # YYYY-MM-DD
                 if current_str != new_date:
                     changes.append(
                         SyncChange(
@@ -480,11 +488,12 @@ class SyncFromHardcoverDialog(QDialog):
                         )
                     )
 
-            # Check date read
-            if sync_dates and date_read_col and hc_book.finished_at:
+            # Check date read (from latest read)
+            latest_finished = hc_book.latest_finished_at
+            if sync_dates and date_read_col and latest_finished:
                 current = self._get_calibre_value(calibre_id, date_read_col)
                 current_str = str(current)[:10] if current else ""
-                new_date = hc_book.finished_at[:10]
+                new_date = latest_finished[:10]
                 if current_str != new_date:
                     changes.append(
                         SyncChange(

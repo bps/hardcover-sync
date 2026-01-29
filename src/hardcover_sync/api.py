@@ -90,6 +90,21 @@ class Book:
 
 
 @dataclass
+class UserBookRead:
+    """Represents a single reading session for a book.
+
+    Hardcover supports multiple reads of the same book (re-reads).
+    Each read has its own start/finish dates and progress.
+    """
+
+    id: int
+    started_at: str | None = None
+    finished_at: str | None = None
+    progress_pages: int | None = None
+    edition_id: int | None = None
+
+
+@dataclass
 class UserBook:
     """Represents a book in a user's library."""
 
@@ -98,15 +113,68 @@ class UserBook:
     edition_id: int | None = None
     status_id: int | None = None
     rating: float | None = None
-    progress: float | None = None
-    progress_pages: int | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
     review: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
     book: Book | None = None
     edition: Edition | None = None
+    reads: list[UserBookRead] | None = None
+
+    # Deprecated fields - use reads instead
+    # Kept for backward compatibility but always None from API
+    progress: float | None = None
+    progress_pages: int | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+
+    @property
+    def latest_read(self) -> UserBookRead | None:
+        """Get the most recent reading session (first in list, sorted by started_at desc)."""
+        if self.reads:
+            return self.reads[0]
+        return None
+
+    @property
+    def first_read(self) -> UserBookRead | None:
+        """Get the first/oldest reading session."""
+        if self.reads:
+            return self.reads[-1]
+        return None
+
+    @property
+    def latest_started_at(self) -> str | None:
+        """Get the start date from the most recent read."""
+        read = self.latest_read
+        return read.started_at if read else None
+
+    @property
+    def latest_finished_at(self) -> str | None:
+        """Get the finish date from the most recent read."""
+        read = self.latest_read
+        return read.finished_at if read else None
+
+    @property
+    def first_started_at(self) -> str | None:
+        """Get the start date from the first read (when they first started the book)."""
+        read = self.first_read
+        return read.started_at if read else None
+
+    @property
+    def first_finished_at(self) -> str | None:
+        """Get the finish date from the first read (when they first finished)."""
+        read = self.first_read
+        return read.finished_at if read else None
+
+    @property
+    def current_progress_pages(self) -> int | None:
+        """Get progress pages from the most recent read."""
+        read = self.latest_read
+        return read.progress_pages if read else None
+
+    @property
+    def read_count(self) -> int:
+        """Get the number of times this book has been read/started."""
+        return len(self.reads) if self.reads else 0
 
 
 @dataclass
@@ -462,6 +530,21 @@ class HardcoverAPI:
     # User Library Methods
     # =========================================================================
 
+    def _parse_reads(self, reads_data: list[dict] | None) -> list[UserBookRead]:
+        """Parse user_book_reads data into UserBookRead objects."""
+        if not reads_data:
+            return []
+        return [
+            UserBookRead(
+                id=r["id"],
+                started_at=r.get("started_at"),
+                finished_at=r.get("finished_at"),
+                progress_pages=r.get("progress_pages"),
+                edition_id=r.get("edition_id"),
+            )
+            for r in reads_data
+        ]
+
     def get_user_books(
         self, user_id: int | None = None, limit: int = 100, offset: int = 0
     ) -> list[UserBook]:
@@ -523,15 +606,12 @@ class HardcoverAPI:
                     edition_id=ub.get("edition_id"),
                     status_id=ub.get("status_id"),
                     rating=ub.get("rating"),
-                    progress=ub.get("progress"),
-                    progress_pages=ub.get("progress_pages"),
-                    started_at=ub.get("started_at"),
-                    finished_at=ub.get("finished_at"),
                     review=ub.get("review"),
                     created_at=ub.get("created_at"),
                     updated_at=ub.get("updated_at"),
                     book=book,
                     edition=edition,
+                    reads=self._parse_reads(ub.get("user_book_reads")),
                 )
             )
 
@@ -569,13 +649,10 @@ class HardcoverAPI:
             edition_id=ub.get("edition_id"),
             status_id=ub.get("status_id"),
             rating=ub.get("rating"),
-            progress=ub.get("progress"),
-            progress_pages=ub.get("progress_pages"),
-            started_at=ub.get("started_at"),
-            finished_at=ub.get("finished_at"),
             review=ub.get("review"),
             created_at=ub.get("created_at"),
             updated_at=ub.get("updated_at"),
+            reads=self._parse_reads(ub.get("user_book_reads")),
         )
 
     def add_book_to_library(

@@ -13,6 +13,8 @@ from hardcover_sync.api import (
     HardcoverAPI,
     HardcoverAPIError,
     RateLimitError,
+    UserBook,
+    UserBookRead,
 )
 
 
@@ -292,6 +294,15 @@ class TestGetUserBooks:
                             "title": "Test Edition",
                             "pages": 300,
                         },
+                        "user_book_reads": [
+                            {
+                                "id": 100,
+                                "started_at": "2024-01-01",
+                                "finished_at": "2024-01-15",
+                                "progress_pages": 300,
+                                "edition_id": 456,
+                            }
+                        ],
                     }
                 ]
             },
@@ -306,6 +317,11 @@ class TestGetUserBooks:
         assert books[0].rating == 4.5
         assert books[0].book.title == "Test Book"
         assert books[0].edition.isbn_13 == "9780000000000"
+        # Verify reads are parsed
+        assert books[0].reads is not None
+        assert len(books[0].reads) == 1
+        assert books[0].latest_started_at == "2024-01-01"
+        assert books[0].latest_finished_at == "2024-01-15"
 
 
 class TestAddBookToLibrary:
@@ -617,3 +633,447 @@ class TestDryRunMode:
 
         # Original should still have the entry
         assert len(dry_run_api.get_dry_run_log()) == 1
+
+
+# =============================================================================
+# UserBookRead Tests
+# =============================================================================
+
+
+class TestUserBookRead:
+    """Tests for the UserBookRead dataclass."""
+
+    def test_create_user_book_read(self):
+        """Test creating a UserBookRead instance."""
+        read = UserBookRead(
+            id=100,
+            started_at="2024-01-15",
+            finished_at="2024-01-30",
+            progress_pages=250,
+            edition_id=456,
+        )
+
+        assert read.id == 100
+        assert read.started_at == "2024-01-15"
+        assert read.finished_at == "2024-01-30"
+        assert read.progress_pages == 250
+        assert read.edition_id == 456
+
+    def test_user_book_read_with_none_values(self):
+        """Test UserBookRead with missing/None values."""
+        read = UserBookRead(id=100)
+
+        assert read.id == 100
+        assert read.started_at is None
+        assert read.finished_at is None
+        assert read.progress_pages is None
+        assert read.edition_id is None
+
+
+class TestUserBookWithReads:
+    """Tests for UserBook with user_book_reads (multiple reads support)."""
+
+    def test_user_book_with_no_reads(self):
+        """Test UserBook with no reads array."""
+        user_book = UserBook(id=1001, book_id=789)
+
+        assert user_book.reads is None
+        assert user_book.latest_read is None
+        assert user_book.first_read is None
+        assert user_book.latest_started_at is None
+        assert user_book.latest_finished_at is None
+        assert user_book.current_progress_pages is None
+        assert user_book.read_count == 0
+
+    def test_user_book_with_empty_reads(self):
+        """Test UserBook with empty reads array."""
+        user_book = UserBook(id=1001, book_id=789, reads=[])
+
+        assert user_book.reads == []
+        assert user_book.latest_read is None
+        assert user_book.first_read is None
+        assert user_book.latest_started_at is None
+        assert user_book.latest_finished_at is None
+        assert user_book.current_progress_pages is None
+        assert user_book.read_count == 0
+
+    def test_user_book_with_single_read(self):
+        """Test UserBook with a single read."""
+        read = UserBookRead(
+            id=100,
+            started_at="2024-01-15",
+            finished_at="2024-01-30",
+            progress_pages=300,
+        )
+        user_book = UserBook(id=1001, book_id=789, reads=[read])
+
+        assert user_book.read_count == 1
+        assert user_book.latest_read == read
+        assert user_book.first_read == read
+        assert user_book.latest_started_at == "2024-01-15"
+        assert user_book.latest_finished_at == "2024-01-30"
+        assert user_book.first_started_at == "2024-01-15"
+        assert user_book.first_finished_at == "2024-01-30"
+        assert user_book.current_progress_pages == 300
+
+    def test_user_book_with_multiple_reads(self):
+        """Test UserBook with multiple reads (re-reads)."""
+        # Reads are ordered by started_at desc, so latest is first
+        read_2024 = UserBookRead(
+            id=200,
+            started_at="2024-06-01",
+            finished_at="2024-06-15",
+            progress_pages=300,
+        )
+        read_2023 = UserBookRead(
+            id=100,
+            started_at="2023-01-01",
+            finished_at="2023-01-20",
+            progress_pages=300,
+        )
+        user_book = UserBook(id=1001, book_id=789, reads=[read_2024, read_2023])
+
+        assert user_book.read_count == 2
+
+        # Latest read (first in list)
+        assert user_book.latest_read == read_2024
+        assert user_book.latest_started_at == "2024-06-01"
+        assert user_book.latest_finished_at == "2024-06-15"
+
+        # First read (last in list)
+        assert user_book.first_read == read_2023
+        assert user_book.first_started_at == "2023-01-01"
+        assert user_book.first_finished_at == "2023-01-20"
+
+    def test_user_book_with_in_progress_read(self):
+        """Test UserBook with a read that's in progress (no finished_at)."""
+        read = UserBookRead(
+            id=100,
+            started_at="2024-01-15",
+            finished_at=None,  # Still reading
+            progress_pages=150,
+        )
+        user_book = UserBook(id=1001, book_id=789, reads=[read])
+
+        assert user_book.latest_started_at == "2024-01-15"
+        assert user_book.latest_finished_at is None
+        assert user_book.current_progress_pages == 150
+
+    def test_user_book_with_mixed_complete_incomplete_reads(self):
+        """Test UserBook with mix of complete and in-progress reads."""
+        # Latest read is in progress
+        current_read = UserBookRead(
+            id=200,
+            started_at="2024-06-01",
+            finished_at=None,
+            progress_pages=50,
+        )
+        # Previous read was completed
+        previous_read = UserBookRead(
+            id=100,
+            started_at="2023-01-01",
+            finished_at="2023-01-20",
+            progress_pages=300,
+        )
+        user_book = UserBook(id=1001, book_id=789, reads=[current_read, previous_read])
+
+        # Latest read properties
+        assert user_book.latest_started_at == "2024-06-01"
+        assert user_book.latest_finished_at is None  # Current read not finished
+        assert user_book.current_progress_pages == 50
+
+        # First read properties
+        assert user_book.first_finished_at == "2023-01-20"
+
+    def test_deprecated_fields_are_none(self):
+        """Test that deprecated fields (progress, started_at, finished_at) default to None."""
+        user_book = UserBook(
+            id=1001,
+            book_id=789,
+            reads=[
+                UserBookRead(
+                    id=100,
+                    started_at="2024-01-15",
+                    finished_at="2024-01-30",
+                    progress_pages=300,
+                )
+            ],
+        )
+
+        # These deprecated fields should be None even when reads exist
+        # (they're kept for backward compat but not populated from API)
+        assert user_book.progress is None
+        assert user_book.progress_pages is None
+        assert user_book.started_at is None
+        assert user_book.finished_at is None
+
+
+class TestGetUserBooksWithReads:
+    """Tests for get_user_books with user_book_reads parsing."""
+
+    def test_get_user_books_with_reads(self, api, mock_client):
+        """Test that user_book_reads are correctly parsed."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {
+                "user_books": [
+                    {
+                        "id": 1001,
+                        "book_id": 789,
+                        "edition_id": 456,
+                        "status_id": 3,
+                        "rating": 4.5,
+                        "review": "Great book!",
+                        "created_at": "2024-01-01T00:00:00",
+                        "updated_at": "2024-01-15T00:00:00",
+                        "book": {
+                            "id": 789,
+                            "title": "Test Book",
+                            "slug": "test-book",
+                            "contributions": [],
+                        },
+                        "edition": {
+                            "id": 456,
+                            "isbn_13": "9780000000000",
+                            "isbn_10": None,
+                            "title": "Test Edition",
+                            "pages": 300,
+                        },
+                        "user_book_reads": [
+                            {
+                                "id": 100,
+                                "started_at": "2024-01-10",
+                                "finished_at": "2024-01-15",
+                                "progress_pages": 300,
+                                "edition_id": 456,
+                            }
+                        ],
+                    }
+                ]
+            },
+        ]
+
+        books = api.get_user_books()
+
+        assert len(books) == 1
+        user_book = books[0]
+
+        # Reads should be parsed
+        assert user_book.reads is not None
+        assert len(user_book.reads) == 1
+        assert user_book.reads[0].id == 100
+        assert user_book.reads[0].started_at == "2024-01-10"
+        assert user_book.reads[0].finished_at == "2024-01-15"
+        assert user_book.reads[0].progress_pages == 300
+
+        # Convenience properties should work
+        assert user_book.latest_started_at == "2024-01-10"
+        assert user_book.latest_finished_at == "2024-01-15"
+        assert user_book.current_progress_pages == 300
+
+    def test_get_user_books_with_multiple_reads(self, api, mock_client):
+        """Test parsing multiple reads for a book."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {
+                "user_books": [
+                    {
+                        "id": 1001,
+                        "book_id": 789,
+                        "edition_id": 456,
+                        "status_id": 3,
+                        "rating": 5.0,
+                        "review": None,
+                        "created_at": "2023-01-01T00:00:00",
+                        "updated_at": "2024-06-20T00:00:00",
+                        "book": {
+                            "id": 789,
+                            "title": "Favorite Book",
+                            "slug": "favorite-book",
+                            "contributions": [],
+                        },
+                        "edition": None,
+                        # Multiple reads ordered by started_at desc
+                        "user_book_reads": [
+                            {
+                                "id": 200,
+                                "started_at": "2024-06-01",
+                                "finished_at": "2024-06-15",
+                                "progress_pages": 300,
+                                "edition_id": None,
+                            },
+                            {
+                                "id": 100,
+                                "started_at": "2023-01-01",
+                                "finished_at": "2023-01-20",
+                                "progress_pages": 300,
+                                "edition_id": 456,
+                            },
+                        ],
+                    }
+                ]
+            },
+        ]
+
+        books = api.get_user_books()
+
+        user_book = books[0]
+        assert user_book.read_count == 2
+
+        # Latest read (re-read in 2024)
+        assert user_book.latest_started_at == "2024-06-01"
+        assert user_book.latest_finished_at == "2024-06-15"
+
+        # First read (original read in 2023)
+        assert user_book.first_started_at == "2023-01-01"
+        assert user_book.first_finished_at == "2023-01-20"
+
+    def test_get_user_books_with_no_reads(self, api, mock_client):
+        """Test parsing user_books when no reads exist."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {
+                "user_books": [
+                    {
+                        "id": 1001,
+                        "book_id": 789,
+                        "edition_id": 456,
+                        "status_id": 1,  # Want to Read - no reads yet
+                        "rating": None,
+                        "review": None,
+                        "created_at": "2024-01-01T00:00:00",
+                        "updated_at": "2024-01-01T00:00:00",
+                        "book": {
+                            "id": 789,
+                            "title": "TBR Book",
+                            "slug": "tbr-book",
+                            "contributions": [],
+                        },
+                        "edition": None,
+                        "user_book_reads": [],  # Empty array
+                    }
+                ]
+            },
+        ]
+
+        books = api.get_user_books()
+
+        user_book = books[0]
+        assert user_book.reads == []
+        assert user_book.read_count == 0
+        assert user_book.latest_started_at is None
+        assert user_book.latest_finished_at is None
+        assert user_book.current_progress_pages is None
+
+    def test_get_user_books_without_reads_field(self, api, mock_client):
+        """Test parsing user_books when user_book_reads field is missing entirely."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {
+                "user_books": [
+                    {
+                        "id": 1001,
+                        "book_id": 789,
+                        "edition_id": 456,
+                        "status_id": 3,
+                        "rating": 4.0,
+                        "review": None,
+                        "created_at": "2024-01-01T00:00:00",
+                        "updated_at": "2024-01-15T00:00:00",
+                        "book": {
+                            "id": 789,
+                            "title": "Old Book",
+                            "slug": "old-book",
+                            "contributions": [],
+                        },
+                        "edition": None,
+                        # No user_book_reads field at all
+                    }
+                ]
+            },
+        ]
+
+        books = api.get_user_books()
+
+        user_book = books[0]
+        # Should handle missing field gracefully
+        assert user_book.reads == []
+        assert user_book.read_count == 0
+        assert user_book.latest_started_at is None
+
+
+class TestGetUserBookWithReads:
+    """Tests for get_user_book (single book) with reads parsing."""
+
+    def test_get_user_book_with_reads(self, api, mock_client):
+        """Test that single user_book query parses reads."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {
+                "user_books": [
+                    {
+                        "id": 1001,
+                        "book_id": 789,
+                        "edition_id": 456,
+                        "status_id": 2,
+                        "rating": None,
+                        "review": None,
+                        "created_at": "2024-01-01T00:00:00",
+                        "updated_at": "2024-01-10T00:00:00",
+                        "user_book_reads": [
+                            {
+                                "id": 100,
+                                "started_at": "2024-01-05",
+                                "finished_at": None,  # Currently reading
+                                "progress_pages": 75,
+                                "edition_id": 456,
+                            }
+                        ],
+                    }
+                ]
+            },
+        ]
+
+        user_book = api.get_user_book(book_id=789)
+
+        assert user_book is not None
+        assert user_book.reads is not None
+        assert len(user_book.reads) == 1
+        assert user_book.latest_started_at == "2024-01-05"
+        assert user_book.latest_finished_at is None
+        assert user_book.current_progress_pages == 75
