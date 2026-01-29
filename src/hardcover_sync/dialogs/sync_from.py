@@ -625,6 +625,9 @@ class SyncFromHardcoverDialog(QDialog):
         """Find Hardcover books that aren't in Calibre yet."""
         new_books = []
 
+        # Get reading status filter (empty list means all statuses)
+        sync_statuses = self.prefs.get("sync_statuses", [])
+
         for hc_book in self.hardcover_books:
             # Skip books that are already linked to Calibre
             if hc_book.book_id in hc_to_calibre:
@@ -632,6 +635,10 @@ class SyncFromHardcoverDialog(QDialog):
 
             # Skip if no book metadata
             if not hc_book.book:
+                continue
+
+            # Skip if status is not in the sync filter (when filter is set)
+            if sync_statuses and hc_book.status_id not in sync_statuses:
                 continue
 
             # Extract metadata

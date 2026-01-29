@@ -41,6 +41,9 @@ DEFAULT_PREFS = {
     # Status value mappings (Hardcover status ID -> Calibre column value)
     # e.g., {1: "Want to Read", 2: "Currently Reading", ...}
     "status_mappings": {},
+    # Reading statuses to include when syncing from Hardcover
+    # Empty list means all statuses; otherwise list of status IDs to include
+    "sync_statuses": [],  # Default: sync all statuses
     # Sync behavior
     "conflict_resolution": "ask",  # ask, hardcover, calibre, newest
     "sync_rating": True,
@@ -403,6 +406,32 @@ class ConfigWidget:
 
         layout.addWidget(sync_group)
 
+        # Reading statuses to sync group
+        status_filter_group = QGroupBox("Reading Statuses to Sync")
+        status_filter_layout = QVBoxLayout(status_filter_group)
+
+        status_filter_label = QLabel(
+            "Select which reading statuses to include when syncing from Hardcover. "
+            "Unchecked statuses will be skipped when creating new books."
+        )
+        status_filter_label.setWordWrap(True)
+        status_filter_layout.addWidget(status_filter_label)
+
+        # Get currently enabled statuses (empty list means all enabled)
+        enabled_statuses = prefs.get("sync_statuses", [])
+        all_enabled = len(enabled_statuses) == 0
+
+        # Create checkboxes for each reading status
+        self.status_filter_checkboxes = {}
+        for status_id, status_name in READING_STATUSES.items():
+            checkbox = QCheckBox(status_name)
+            # If list is empty, all are enabled; otherwise check if in list
+            checkbox.setChecked(all_enabled or status_id in enabled_statuses)
+            self.status_filter_checkboxes[status_id] = checkbox
+            status_filter_layout.addWidget(checkbox)
+
+        layout.addWidget(status_filter_group)
+
         # Conflict resolution group
         conflict_group = QGroupBox("Conflict Resolution")
         conflict_layout = QFormLayout(conflict_group)
@@ -628,6 +657,19 @@ class ConfigWidget:
         prefs["sync_dates"] = self.sync_dates_checkbox.isChecked()
         prefs["sync_review"] = self.sync_review_checkbox.isChecked()
         prefs["sync_lists"] = self.sync_lists_checkbox.isChecked()
+
+        # Save reading status filter
+        # If all are checked, save empty list (means "all")
+        # Otherwise save list of checked status IDs
+        checked_statuses = [
+            status_id
+            for status_id, checkbox in self.status_filter_checkboxes.items()
+            if checkbox.isChecked()
+        ]
+        if len(checked_statuses) == len(READING_STATUSES):
+            prefs["sync_statuses"] = []  # All enabled
+        else:
+            prefs["sync_statuses"] = checked_statuses
 
         # Save conflict resolution
         prefs["conflict_resolution"] = self.conflict_combo.currentData()
