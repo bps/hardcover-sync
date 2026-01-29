@@ -189,11 +189,39 @@ class HardcoverSyncAction(InterfaceAction):
 
     def link_to_hardcover(self):
         """Link selected book to a Hardcover book."""
+        from calibre.gui2 import error_dialog, info_dialog
+
         book_ids = self.get_selected_book_ids()
         if not book_ids:
             return self._show_no_selection_error()
-        # TODO: Implement - show search dialog
-        print(f"Link to Hardcover: {book_ids}")
+
+        # Only link one book at a time
+        book_id = book_ids[0]
+        db = self.gui.current_db.new_api
+
+        # Get book info
+        title = db.field_for("title", book_id) or "Unknown"
+        authors = db.field_for("authors", book_id) or []
+
+        # Show the link dialog
+        from .dialogs.link_book import LinkBookDialog
+
+        dialog = LinkBookDialog(self.gui, db, book_id, title, authors)
+        if dialog.exec_() == dialog.Accepted:
+            selected_book = dialog.get_selected_book()
+            if selected_book:
+                # Store the Hardcover ID
+                from .matcher import set_hardcover_id
+
+                edition_id = dialog.get_selected_edition_id()
+                set_hardcover_id(db, book_id, selected_book.id, edition_id)
+
+                info_dialog(
+                    self.gui,
+                    "Book Linked",
+                    f"'{title}' has been linked to '{selected_book.title}' on Hardcover.",
+                    show=True,
+                )
 
     def view_on_hardcover(self):
         """Open selected book on Hardcover in browser."""
@@ -226,11 +254,52 @@ class HardcoverSyncAction(InterfaceAction):
 
     def remove_hardcover_link(self):
         """Remove Hardcover identifier from selected books."""
+        from calibre.gui2 import error_dialog, info_dialog, question_dialog
+
         book_ids = self.get_selected_book_ids()
         if not book_ids:
             return self._show_no_selection_error()
-        # TODO: Implement
-        print(f"Remove Hardcover link: {book_ids}")
+
+        db = self.gui.current_db.new_api
+
+        # Check how many are actually linked
+        linked_ids = []
+        for bid in book_ids:
+            identifiers = db.field_for("identifiers", bid) or {}
+            if "hardcover" in identifiers:
+                linked_ids.append(bid)
+
+        if not linked_ids:
+            error_dialog(
+                self.gui,
+                "No Links Found",
+                "None of the selected books are linked to Hardcover.",
+                show=True,
+            )
+            return
+
+        # Confirm removal
+        if len(linked_ids) == 1:
+            title = db.field_for("title", linked_ids[0])
+            msg = f"Remove Hardcover link from '{title}'?"
+        else:
+            msg = f"Remove Hardcover links from {len(linked_ids)} books?"
+
+        if not question_dialog(self.gui, "Confirm Removal", msg):
+            return
+
+        # Remove links
+        from .matcher import remove_hardcover_id
+
+        for bid in linked_ids:
+            remove_hardcover_id(db, bid)
+
+        info_dialog(
+            self.gui,
+            "Links Removed",
+            f"Removed Hardcover links from {len(linked_ids)} book(s).",
+            show=True,
+        )
 
     def show_configuration(self):
         """Show the plugin configuration dialog."""
