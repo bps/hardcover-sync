@@ -1182,7 +1182,7 @@ class SyncFromHardcoverDialog(QDialog):
 
         # Explicitly set the hardcover identifier (create_book_entry may not persist it)
         if book_id:
-            from hardcover_sync.matcher import set_hardcover_id
+            from ..matcher import set_hardcover_id
 
             set_hardcover_id(self.db, book_id, new_book.hardcover_book_id)
 
