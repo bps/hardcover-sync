@@ -205,20 +205,18 @@ class SyncFromHardcoverDialog(QDialog):
                 f"<b>{linked_count} linked to Hardcover</b>"
             )
 
-        # Column mapping status
+        # Column mapping status - note which fields the API actually supports
         mappings = []
         unmapped = []
 
-        columns = [
+        # Fields that the Hardcover API actually returns
+        supported_columns = [
             ("status_column", "Status"),
             ("rating_column", "Rating"),
-            ("progress_column", "Progress"),
-            ("date_started_column", "Date Started"),
-            ("date_read_column", "Date Read"),
             ("review_column", "Review"),
         ]
 
-        for pref_key, display_name in columns:
+        for pref_key, display_name in supported_columns:
             col = self.prefs.get(pref_key, "")
             if col:
                 mappings.append(f"{display_name} → {col}")
@@ -347,14 +345,12 @@ class SyncFromHardcoverDialog(QDialog):
             self.fetch_button.setEnabled(True)
 
     def _get_unmapped_columns(self) -> list[str]:
-        """Get list of unmapped column names."""
+        """Get list of unmapped column names (only for API-supported fields)."""
         unmapped = []
+        # Only check fields that the Hardcover API actually returns
         columns = [
             ("status_column", "Status"),
             ("rating_column", "Rating"),
-            ("progress_column", "Progress"),
-            ("date_started_column", "Date Started"),
-            ("date_read_column", "Date Read"),
             ("review_column", "Review"),
         ]
         for pref_key, display_name in columns:
@@ -713,7 +709,7 @@ class SyncFromHardcoverDialog(QDialog):
                 self.db.set_field("rating", {change.calibre_id: int(value) if value else None})
             elif column.startswith("#"):
                 # Custom column - need to determine type
-                col_info = self.db.custom_field_metadata(column)
+                col_info = self._get_custom_column_metadata(column)
                 if not col_info:
                     return False, f"Column {column} not found"
 
@@ -741,6 +737,14 @@ class SyncFromHardcoverDialog(QDialog):
 
         except Exception as e:
             return False, str(e)
+
+    def _get_custom_column_metadata(self, column: str) -> dict | None:
+        """Get metadata for a custom column."""
+        try:
+            custom_columns = self.gui.library_view.model().custom_columns
+            return custom_columns.get(column)
+        except (AttributeError, Exception):
+            return None
 
     def _get_column_for_field(self, field: str) -> str | None:
         """Get the Calibre column name for a sync field."""
