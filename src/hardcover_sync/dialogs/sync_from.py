@@ -94,6 +94,7 @@ class NewBookAction:
     hardcover_book_id: int
     title: str
     authors: list[str]
+    user_book: UserBook
     isbn: str | None = None
     release_date: str | None = None
     apply: bool = True
@@ -652,6 +653,7 @@ class SyncFromHardcoverDialog(QDialog):
                     hardcover_book_id=hc_book.book_id,
                     title=title,
                     authors=authors,
+                    user_book=hc_book,
                     isbn=isbn,
                     release_date=release_date,
                 )
@@ -1177,7 +1179,99 @@ class SyncFromHardcoverDialog(QDialog):
 
             set_hardcover_id(self.db, book_id, new_book.hardcover_book_id)
 
+            # Apply all Hardcover user data to the new book
+            self._apply_user_book_data(book_id, new_book.user_book)
+
         return book_id
+
+    def _apply_user_book_data(self, book_id: int, user_book: UserBook):
+        """
+        Apply Hardcover user book data to a Calibre book.
+
+        This sets status, rating, progress, dates, and review based on
+        the user's Hardcover data and column mappings.
+        """
+        from datetime import datetime
+
+        # Get column mappings
+        status_col = self.prefs.get("status_column", "")
+        rating_col = self.prefs.get("rating_column", "")
+        progress_col = self.prefs.get("progress_column", "")
+        date_started_col = self.prefs.get("date_started_column", "")
+        date_read_col = self.prefs.get("date_read_column", "")
+        review_col = self.prefs.get("review_column", "")
+
+        # Get status mappings
+        status_mappings = self.prefs.get("status_mappings", {})
+
+        # Apply status
+        if status_col and user_book.status_id:
+            status_value = status_mappings.get(
+                str(user_book.status_id), READING_STATUSES.get(user_book.status_id, "")
+            )
+            if status_value:
+                self._set_column_value(book_id, status_col, status_value)
+
+        # Apply rating
+        if rating_col and user_book.rating is not None:
+            if rating_col == "rating":
+                # Built-in rating is 0-10
+                rating_value = int(user_book.rating * 2)
+            elif rating_col.startswith("#"):
+                col_info = self._get_custom_column_metadata(rating_col)
+                if col_info and col_info.get("datatype") == "rating":
+                    rating_value = int(user_book.rating * 2)
+                else:
+                    rating_value = user_book.rating
+            else:
+                rating_value = user_book.rating
+            self._set_column_value(book_id, rating_col, rating_value)
+
+        # Apply progress (from latest read)
+        current_progress = user_book.current_progress_pages
+        if progress_col and current_progress is not None:
+            self._set_column_value(book_id, progress_col, current_progress)
+
+        # Apply date started (from latest read)
+        latest_started = user_book.latest_started_at
+        if date_started_col and latest_started:
+            try:
+                date_value = datetime.fromisoformat(latest_started[:10])
+                self._set_column_value(book_id, date_started_col, date_value)
+            except (ValueError, TypeError):
+                pass
+
+        # Apply date read (from latest read)
+        latest_finished = user_book.latest_finished_at
+        if date_read_col and latest_finished:
+            try:
+                date_value = datetime.fromisoformat(latest_finished[:10])
+                self._set_column_value(book_id, date_read_col, date_value)
+            except (ValueError, TypeError):
+                pass
+
+        # Apply review
+        if review_col and user_book.review:
+            self._set_column_value(book_id, review_col, user_book.review)
+
+    def _set_column_value(self, book_id: int, column: str, value):
+        """Set a column value with appropriate type conversion."""
+        if column == "rating":
+            self.db.set_field("rating", {book_id: int(value) if value else None})
+        elif column.startswith("#"):
+            col_info = self._get_custom_column_metadata(column)
+            if col_info:
+                datatype = col_info.get("datatype")
+                if datatype == "int":
+                    value = int(value) if value else None
+                elif datatype == "float":
+                    value = float(value) if value else None
+                elif datatype == "rating":
+                    value = int(value) if value else None
+                # datetime values are already datetime objects
+            self.db.set_field(column, {book_id: value})
+        else:
+            self.db.set_field(column, {book_id: value})
 
     def _get_custom_column_metadata(self, column: str) -> dict | None:
         """Get metadata for a custom column."""
