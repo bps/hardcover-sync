@@ -10,7 +10,9 @@ from dataclasses import dataclass
 from qt.core import (
     QAbstractItemView,
     QApplication,
+    QBrush,
     QCheckBox,
+    QColor,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -561,29 +563,66 @@ class SyncFromHardcoverDialog(QDialog):
         return self.db.field_for(column, book_id)
 
     def _populate_changes_table(self):
-        """Populate the changes table."""
+        """Populate the changes table with changes grouped by book."""
+        # Sort changes by calibre_id to group by book
+        self.changes.sort(key=lambda c: (c.calibre_title.lower(), c.calibre_id))
+
         self.changes_table.setRowCount(len(self.changes))
 
+        # Alternating colors for book groups
+        colors = [
+            QColor(255, 255, 255),  # White
+            QColor(245, 245, 250),  # Light gray-blue
+        ]
+
+        current_book_id = None
+        color_index = 0
+
         for row, change in enumerate(self.changes):
+            # Track book groups for alternating colors
+            if change.calibre_id != current_book_id:
+                current_book_id = change.calibre_id
+                color_index = 1 - color_index  # Toggle between 0 and 1
+                show_title = True
+            else:
+                show_title = False
+
+            bg_brush = QBrush(colors[color_index])
+
             # Apply checkbox
             checkbox = QCheckBox()
             checkbox.setChecked(change.apply)
             checkbox.stateChanged.connect(lambda state, r=row: self._on_checkbox_changed(r, state))
             self.changes_table.setCellWidget(row, 0, checkbox)
 
-            # Book title
-            self.changes_table.setItem(row, 1, QTableWidgetItem(change.calibre_title))
+            # Book title - only show for first row of each book
+            title_item = QTableWidgetItem(change.calibre_title if show_title else "")
+            title_item.setBackground(bg_brush)
+            if show_title:
+                title_item.setFont(self._get_bold_font())
+            self.changes_table.setItem(row, 1, title_item)
 
             # Field
-            self.changes_table.setItem(row, 2, QTableWidgetItem(change.display_field))
+            field_item = QTableWidgetItem(change.display_field)
+            field_item.setBackground(bg_brush)
+            self.changes_table.setItem(row, 2, field_item)
 
             # Current value
-            self.changes_table.setItem(row, 3, QTableWidgetItem(change.old_value or ""))
+            old_item = QTableWidgetItem(change.old_value or "")
+            old_item.setBackground(bg_brush)
+            self.changes_table.setItem(row, 3, old_item)
 
             # New value
             new_item = QTableWidgetItem(change.new_value or "")
             new_item.setForeground(Qt.GlobalColor.darkGreen)
+            new_item.setBackground(bg_brush)
             self.changes_table.setItem(row, 4, new_item)
+
+    def _get_bold_font(self):
+        """Get a bold version of the default font."""
+        font = self.changes_table.font()
+        font.setBold(True)
+        return font
 
     def _on_checkbox_changed(self, row: int, state: int):
         """Handle checkbox state change."""
@@ -746,7 +785,10 @@ class SyncFromHardcoverDialog(QDialog):
             return True, None
 
         except Exception as e:
-            return False, str(e)
+            import traceback
+
+            tb = traceback.format_exc()
+            return False, f"{e}\n\nTraceback:\n{tb}"
 
     def _get_custom_column_metadata(self, column: str) -> dict | None:
         """Get metadata for a custom column."""
