@@ -1,0 +1,48 @@
+# Calibre development environment setup
+
+calibre_version := `calibre --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "7.0.0"`
+calibre_source_url := "https://download.calibre-ebook.com/" + calibre_version + "/calibre-" + calibre_version + ".tar.xz"
+
+# Download and extract Calibre source for IDE support
+source:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [[ -d "source/src" ]]; then
+        echo "Calibre source already exists at .calibre/source"
+        exit 0
+    fi
+
+    echo "Downloading Calibre {{calibre_version}} source..."
+    mkdir -p source
+    curl -L "{{calibre_source_url}}" | tar -xJ -C source --strip-components=1
+    echo "Calibre source extracted to .calibre/source"
+
+# Clean up downloaded source
+clean-source:
+    rm -rf source
+
+# Set up a sample Calibre library for testing
+library:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [[ -d "library" ]]; then
+        echo "Library already exists at .calibre/library"
+        exit 0
+    fi
+
+    echo "Creating sample Calibre library..."
+    mkdir -p library
+    calibredb --with-library=library add --empty
+    echo "Sample library created at .calibre/library"
+
+# Run Calibre with isolated config
+run *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    export CALIBRE_CONFIG_DIRECTORY="${CALIBRE_CONFIG_DIRECTORY:-$(pwd)/config}"
+    mkdir -p "$CALIBRE_CONFIG_DIRECTORY"
+
+    calibre-debug {{ARGS}}
