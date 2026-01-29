@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=61.0", "versioningit>=2.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hardcover-sync"
+dynamic = ["version"]
+description = "Hardcover.app Sync Plugin for Calibre"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.10"
+authors = [{ name = "Brian Smyth" }]
+keywords = ["calibre", "plugin", "hardcover", "books", "reading"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Other/Nonlisted Topic",
+]
+dependencies = [
+    "gql[requests]>=3.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/bps/hardcover-sync"
+Documentation = "https://github.com/bps/hardcover-sync#readme"
+Repository = "https://github.com/bps/hardcover-sync.git"
+Issues = "https://github.com/bps/hardcover-sync/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hardcover_sync = ["images/*.png"]
+
+[tool.versioningit.vcs]
+method = "git"
+default-tag = "0.0.0"
+
+[tool.versioningit.format]
+distance = "{base_version}.dev{distance}+{vcs}{rev}"
+dirty = "{base_version}.dev{distance}+{vcs}{rev}.dirty"
+distance-dirty = "{base_version}.dev{distance}+{vcs}{rev}.dirty"
+
+[tool.versioningit.write]
+file = "src/hardcover_sync/_version.py"
+template = """
+__version__ = "{version}"
+__version_tuple__ = {version_tuple}
+"""
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.14",
+    "ruff>=0.8",
+    "prek>=0.3",
+    "gitlint>=0.19",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+addopts = "--cov=src/hardcover_sync -v --import-mode=importlib"
+
+[tool.coverage.run]
+branch = true
+omit = [
+    "*test*",
+    "*_version*",
+    # Qt-dependent files (require Calibre runtime)
+    "*/dialogs/*",
+    "*/action.py",
+    "*/config.py",
+    "*/__init__.py",
+]
+source = ["src/hardcover_sync"]
+
+[tool.ruff]
+line-length = 100
+builtins = ["_", "get_icons", "I"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "S", "INT", "B", "C4", "UP"]
+ignore = ["UP007"]  # Allow X | Y union syntax
+
+[tool.ruff.lint.per-file-ignores]
+"test/*.py" = ["S101"]  # Allow assert in tests
+
+[tool.pyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.10"
+# Calibre provides these modules at runtime - they're not installable packages
+reportMissingImports = false
+# self._user is set by get_me() but pyright can't track this across method calls
+reportOptionalMemberAccess = false

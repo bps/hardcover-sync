@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#
+# Wrapper for pytest that sets up Calibre library paths.
+# This allows tests to import Calibre modules when needed.
+#
+
+set -euo pipefail
+
+# Set LD_LIBRARY_PATH for Calibre's bundled libraries (Linux)
+if [[ -n "${CALIBRE_LIBRARY_PATH:-}" ]]; then
+    export LD_LIBRARY_PATH="${CALIBRE_LIBRARY_PATH}:${LD_LIBRARY_PATH:-}"
+fi
+
+# Run pytest via uv
+exec uv run python -m pytest "$@"

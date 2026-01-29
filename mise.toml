@@ -1,0 +1,19 @@
+[tools]
+python = "3.11"
+uv = "latest"
+git-cliff = "latest"
+just = "latest"
+prek = "latest"
+
+[env]
+_.file = ".env"
+_.python.venv = ".venv"
+_.path = { path = "./shims", tools = true }
+CALIBRE_HOME = "{{config_root}}/.calibre"
+CALIBRE_CONFIG_DIRECTORY = "{{env.CALIBRE_HOME}}/config"
+CALIBRE_LIBRARY = "{{env.CALIBRE_HOME}}/library"
+CALIBRE_DEVELOP_FROM = "{{env.CALIBRE_HOME}}/source/src"
+PYTHONPATH = "{{env.CALIBRE_DEVELOP_FROM}}"
+
+[settings.python]
+uv_venv_auto = true

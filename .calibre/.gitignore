@@ -1,0 +1,5 @@
+# Ignore downloaded Calibre source and runtime files
+source/
+config/
+library/
+*.tar.xz
