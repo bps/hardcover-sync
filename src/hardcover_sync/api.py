@@ -18,10 +18,10 @@ if str(_plugin_dir) not in sys.path:
     sys.path.insert(0, str(_plugin_dir))
 
 # These packages are bundled with the plugin and added to sys.path above
-from gql import Client, gql  # type: ignore[import-not-found]  # noqa: E402
-from gql.graphql_request import GraphQLRequest  # type: ignore[import-not-found]  # noqa: E402
-from gql.transport.exceptions import TransportQueryError  # type: ignore[import-not-found]  # noqa: E402
-from gql.transport.requests import RequestsHTTPTransport  # type: ignore[import-not-found]  # noqa: E402
+from gql import Client, gql  # noqa: E402
+from gql.graphql_request import GraphQLRequest  # noqa: E402
+from gql.transport.exceptions import TransportQueryError  # noqa: E402
+from gql.transport.requests import RequestsHTTPTransport  # noqa: E402
 
 from . import queries  # noqa: E402
 

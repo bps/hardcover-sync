@@ -52,7 +52,7 @@ class HardcoverSyncPlugin(InterfaceActionBase):
             parent: Parent widget for the dialog.
             plugin_action: The InterfaceAction instance (provides access to GUI/database).
         """
-        from qt.core import QDialog, QDialogButtonBox, QVBoxLayout  # type: ignore[import-not-found]
+        from qt.core import QDialog, QDialogButtonBox, QVBoxLayout
 
         from .config import ConfigWidget
 

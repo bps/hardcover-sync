@@ -671,7 +671,7 @@ class SyncFromHardcoverDialog(QDialog):
             self.gui.library_view.model().refresh()
 
         # Show summary dialog before closing
-        from calibre.gui2 import info_dialog  # type: ignore[import-not-found]
+        from calibre.gui2 import info_dialog
 
         if errors:
             info_dialog(

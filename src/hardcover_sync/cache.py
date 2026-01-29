@@ -66,7 +66,7 @@ class HardcoverCache:
 
         try:
             # Try to load from plugin data
-            from calibre.utils.serialize import json_loads  # type: ignore[import-not-found]
+            from calibre.utils.serialize import json_loads
 
             data = self._db.new_api.pref("hardcover_sync_cache", default=None)
             if data:
@@ -83,7 +83,7 @@ class HardcoverCache:
             return
 
         try:
-            from calibre.utils.serialize import json_dumps  # type: ignore[import-not-found]
+            from calibre.utils.serialize import json_dumps
 
             cache_data = {
                 "isbn_cache": self._serialize_isbn_cache(),
