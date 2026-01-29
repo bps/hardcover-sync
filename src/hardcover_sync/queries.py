@@ -128,6 +128,7 @@ query UserBooks($user_id: Int!, $limit: Int!, $offset: Int!) {
             id
             title
             slug
+            release_date
             contributions {
                 author {
                     id

@@ -587,6 +587,7 @@ class HardcoverAPI:
                     id=book_data["id"],
                     title=book_data["title"],
                     slug=book_data.get("slug"),
+                    release_date=book_data.get("release_date"),
                     authors=authors,
                 )
 

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from qt.core import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -86,6 +87,23 @@ class SyncChange:
         }.get(self.field, self.field)
 
 
+@dataclass
+class NewBookAction:
+    """Represents a new book to create in Calibre from Hardcover."""
+
+    hardcover_book_id: int
+    title: str
+    authors: list[str]
+    isbn: str | None = None
+    release_date: str | None = None
+    apply: bool = True
+
+    @property
+    def author_string(self) -> str:
+        """Get authors as a comma-separated string."""
+        return ", ".join(self.authors) if self.authors else "Unknown"
+
+
 class SyncFromHardcoverDialog(QDialog):
     """
     Dialog for syncing data from Hardcover to Calibre.
@@ -107,6 +125,7 @@ class SyncFromHardcoverDialog(QDialog):
         self.db = self.gui.current_db.new_api
         self.prefs = get_plugin_prefs()
         self.changes: list[SyncChange] = []
+        self.new_books: list[NewBookAction] = []
         self.hardcover_books: list[UserBook] = []
 
         self.setWindowTitle("Sync from Hardcover")
@@ -142,11 +161,20 @@ class SyncFromHardcoverDialog(QDialog):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        # Fetch button
+        # Fetch button and options
         fetch_layout = QHBoxLayout()
         self.fetch_button = QPushButton("Fetch Library")
         self.fetch_button.clicked.connect(self._on_fetch)
         fetch_layout.addWidget(self.fetch_button)
+
+        # Checkbox to create new books
+        self.create_books_checkbox = QCheckBox("Add books not in Calibre")
+        self.create_books_checkbox.setToolTip(
+            "Create new Calibre entries for Hardcover books that aren't in your library yet"
+        )
+        self.create_books_checkbox.setChecked(False)
+        fetch_layout.addWidget(self.create_books_checkbox)
+
         fetch_layout.addStretch()
 
         # Expand/Collapse all buttons
@@ -283,17 +311,17 @@ class SyncFromHardcoverDialog(QDialog):
             self.warnings_label.setVisible(False)
 
         # Update status message
-        if linked_count == 0:
-            self.status_label.setText(
-                "No books are linked to Hardcover. Link books first using "
-                "'Link to Hardcover...' before syncing."
-            )
-            self.fetch_button.setEnabled(False)
-        elif not self.prefs.get("api_token"):
+        if not self.prefs.get("api_token"):
             self.status_label.setText(
                 "No API token configured. Go to plugin settings to add your token."
             )
             self.fetch_button.setEnabled(False)
+        elif linked_count == 0:
+            self.status_label.setText(
+                "No books are linked to Hardcover. Check 'Add books not in Calibre' "
+                "to import from your Hardcover library, or link existing books first."
+            )
+            self.fetch_button.setEnabled(True)  # Still allow fetching for new books
         else:
             self.status_label.setText("Click 'Fetch Library' to load your Hardcover books.")
             self.fetch_button.setEnabled(True)
@@ -334,21 +362,27 @@ class SyncFromHardcoverDialog(QDialog):
             )
             QApplication.processEvents()
 
-            # Find changes
+            # Find changes for linked books
             self.changes = self._find_changes(hc_to_calibre)
+
+            # Find new books to create (if checkbox is checked)
+            self.new_books = []
+            if self.create_books_checkbox.isChecked():
+                self.new_books = self._find_new_books(hc_to_calibre)
+
             self._populate_changes_tree()
 
             # Update UI
             self.progress_bar.setVisible(False)
-            self.expand_all_button.setEnabled(len(self.changes) > 0)
-            self.collapse_all_button.setEnabled(len(self.changes) > 0)
-            self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(
-                len(self.changes) > 0
-            )
+            has_items = len(self.changes) > 0 or len(self.new_books) > 0
+            self.expand_all_button.setEnabled(has_items)
+            self.collapse_all_button.setEnabled(has_items)
+            self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(has_items)
             self._update_summary()
 
             # Detailed status message
-            if not self.changes:
+            unmatched_count = len(self.hardcover_books) - matched_count
+            if not self.changes and not self.new_books:
                 if matched_count == 0:
                     self.status_label.setText(
                         f"Fetched {len(self.hardcover_books)} books from Hardcover, "
@@ -371,10 +405,17 @@ class SyncFromHardcoverDialog(QDialog):
                             "Calibre is already in sync with Hardcover."
                         )
             else:
-                self.status_label.setText(
-                    f"Found {len(self.changes)} change(s) from {matched_count} matched books "
-                    f"(out of {len(self.hardcover_books)} in your Hardcover library)."
+                parts = []
+                if self.changes:
+                    parts.append(f"{len(self.changes)} change(s)")
+                if self.new_books:
+                    parts.append(f"{len(self.new_books)} new book(s) to add")
+                status = (
+                    f"Found {', '.join(parts)} from {len(self.hardcover_books)} Hardcover books."
                 )
+                if unmatched_count > 0 and not self.create_books_checkbox.isChecked():
+                    status += f" ({unmatched_count} not in Calibre - check 'Add books' to include)"
+                self.status_label.setText(status)
 
         except Exception as e:
             self.status_label.setText(f"Error fetching library: {e}")
@@ -579,6 +620,47 @@ class SyncFromHardcoverDialog(QDialog):
 
         return changes
 
+    def _find_new_books(self, hc_to_calibre: dict[int, int]) -> list[NewBookAction]:
+        """Find Hardcover books that aren't in Calibre yet."""
+        new_books = []
+
+        for hc_book in self.hardcover_books:
+            # Skip books that are already linked to Calibre
+            if hc_book.book_id in hc_to_calibre:
+                continue
+
+            # Skip if no book metadata
+            if not hc_book.book:
+                continue
+
+            # Extract metadata
+            title = hc_book.book.title
+            authors = []
+            if hc_book.book.authors:
+                authors = [a.name for a in hc_book.book.authors]
+
+            # Get ISBN from edition if available
+            isbn = None
+            if hc_book.edition:
+                isbn = hc_book.edition.isbn_13 or hc_book.edition.isbn_10
+
+            # Get release date
+            release_date = hc_book.book.release_date
+
+            new_books.append(
+                NewBookAction(
+                    hardcover_book_id=hc_book.book_id,
+                    title=title,
+                    authors=authors,
+                    isbn=isbn,
+                    release_date=release_date,
+                )
+            )
+
+        # Sort by title
+        new_books.sort(key=lambda x: x.title.lower())
+        return new_books
+
     def _build_hardcover_to_calibre_map(self) -> dict[int, int]:
         """Build a map from Hardcover book ID to Calibre book ID."""
         hc_to_calibre = {}
@@ -616,6 +698,35 @@ class SyncFromHardcoverDialog(QDialog):
         self.changes_tree.clear()
         self.changes_tree.blockSignals(True)
 
+        # Add new books section first (if any)
+        if self.new_books:
+            # Create a section header for new books
+            new_books_header = QTreeWidgetItem()
+            new_books_header.setText(0, f"New Books ({len(self.new_books)})")
+            new_books_header.setFlags(new_books_header.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            new_books_header.setCheckState(0, Qt.CheckState.Checked)
+            new_books_header.setData(0, Qt.ItemDataRole.UserRole, ("new_books_header", None))
+
+            # Make header bold and colored
+            font = new_books_header.font(0)
+            font.setBold(True)
+            new_books_header.setFont(0, font)
+            new_books_header.setForeground(0, Qt.GlobalColor.darkBlue)
+
+            for new_book in self.new_books:
+                book_item = QTreeWidgetItem(new_books_header)
+                book_item.setText(0, new_book.title)
+                book_item.setText(1, "(not in Calibre)")
+                book_item.setText(2, new_book.author_string)
+                book_item.setFlags(book_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                book_item.setCheckState(
+                    0, Qt.CheckState.Checked if new_book.apply else Qt.CheckState.Unchecked
+                )
+                book_item.setData(0, Qt.ItemDataRole.UserRole, ("new_book", new_book))
+                book_item.setForeground(2, Qt.GlobalColor.darkGreen)
+
+            self.changes_tree.addTopLevelItem(new_books_header)
+
         # Group changes by calibre_id
         books: dict[int, list[SyncChange]] = {}
         for change in self.changes:
@@ -623,52 +734,66 @@ class SyncFromHardcoverDialog(QDialog):
                 books[change.calibre_id] = []
             books[change.calibre_id].append(change)
 
-        # Sort books by title
-        sorted_books = sorted(books.items(), key=lambda x: x[1][0].calibre_title.lower())
+        # Add updates section header (if any changes)
+        if books:
+            updates_header = QTreeWidgetItem()
+            updates_header.setText(0, f"Updates ({len(self.changes)} changes)")
+            updates_header.setFlags(updates_header.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            updates_header.setCheckState(0, Qt.CheckState.Checked)
+            updates_header.setData(0, Qt.ItemDataRole.UserRole, ("updates_header", None))
 
-        # Create tree items
-        for calibre_id, book_changes in sorted_books:
-            book_title = book_changes[0].calibre_title
-            change_count = len(book_changes)
-
-            # Create parent item for the book
-            book_item = QTreeWidgetItem()
-            book_item.setText(
-                0, f"{book_title} ({change_count} change{'s' if change_count != 1 else ''})"
-            )
-            book_item.setFlags(book_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            book_item.setCheckState(0, Qt.CheckState.Checked)
-            book_item.setData(0, Qt.ItemDataRole.UserRole, ("book", calibre_id))
-
-            # Make book title bold
-            font = book_item.font(0)
+            font = updates_header.font(0)
             font.setBold(True)
-            book_item.setFont(0, font)
+            updates_header.setFont(0, font)
+            updates_header.setForeground(0, Qt.GlobalColor.darkBlue)
 
-            # Create child items for each change
-            for change in book_changes:
-                change_item = QTreeWidgetItem(book_item)
-                change_item.setText(0, change.display_field)
-                change_item.setText(1, change.old_value or "(empty)")
-                change_item.setText(2, change.new_value or "(empty)")
-                change_item.setFlags(change_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                change_item.setCheckState(
-                    0, Qt.CheckState.Checked if change.apply else Qt.CheckState.Unchecked
+            # Sort books by title
+            sorted_books = sorted(books.items(), key=lambda x: x[1][0].calibre_title.lower())
+
+            # Create tree items for each book with changes
+            for calibre_id, book_changes in sorted_books:
+                book_title = book_changes[0].calibre_title
+                change_count = len(book_changes)
+
+                # Create parent item for the book
+                book_item = QTreeWidgetItem(updates_header)
+                book_item.setText(
+                    0, f"{book_title} ({change_count} change{'s' if change_count != 1 else ''})"
                 )
-                change_item.setData(0, Qt.ItemDataRole.UserRole, ("change", change))
+                book_item.setFlags(book_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                book_item.setCheckState(0, Qt.CheckState.Checked)
+                book_item.setData(0, Qt.ItemDataRole.UserRole, ("book", calibre_id))
 
-                # Color the new value green
-                change_item.setForeground(2, Qt.GlobalColor.darkGreen)
+                # Make book title bold
+                font = book_item.font(0)
+                font.setBold(True)
+                book_item.setFont(0, font)
 
-            self.changes_tree.addTopLevelItem(book_item)
+                # Create child items for each change
+                for change in book_changes:
+                    change_item = QTreeWidgetItem(book_item)
+                    change_item.setText(0, change.display_field)
+                    change_item.setText(1, change.old_value or "(empty)")
+                    change_item.setText(2, change.new_value or "(empty)")
+                    change_item.setFlags(change_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    change_item.setCheckState(
+                        0, Qt.CheckState.Checked if change.apply else Qt.CheckState.Unchecked
+                    )
+                    change_item.setData(0, Qt.ItemDataRole.UserRole, ("change", change))
+
+                    # Color the new value green
+                    change_item.setForeground(2, Qt.GlobalColor.darkGreen)
+
+            self.changes_tree.addTopLevelItem(updates_header)
 
         # Expand all by default
         self.changes_tree.expandAll()
         self.changes_tree.blockSignals(False)
 
         # Enable expand/collapse buttons
-        self.expand_all_button.setEnabled(True)
-        self.collapse_all_button.setEnabled(True)
+        has_items = len(self.changes) > 0 or len(self.new_books) > 0
+        self.expand_all_button.setEnabled(has_items)
+        self.collapse_all_button.setEnabled(has_items)
 
     def _on_item_changed(self, item: QTreeWidgetItem, column: int):
         """Handle checkbox state changes in the tree."""
@@ -683,7 +808,22 @@ class SyncFromHardcoverDialog(QDialog):
 
         self.changes_tree.blockSignals(True)
 
-        if item_type == "book":
+        if item_type in ("new_books_header", "updates_header"):
+            # Section header changed - update all children recursively
+            checked = item.checkState(0) == Qt.CheckState.Checked
+            self._set_children_checked(item, checked)
+
+        elif item_type == "new_book":
+            # Individual new book item changed
+            new_book = item_data
+            new_book.apply = item.checkState(0) == Qt.CheckState.Checked
+
+            # Update parent header state
+            parent = item.parent()
+            if parent:
+                self._update_parent_check_state(parent)
+
+        elif item_type == "book":
             # Book item changed - update all child changes
             checked = item.checkState(0) == Qt.CheckState.Checked
             for i in range(item.childCount()):
@@ -695,6 +835,11 @@ class SyncFromHardcoverDialog(QDialog):
                 if child_data and child_data[0] == "change":
                     child_data[1].apply = checked
 
+            # Update parent header state
+            parent = item.parent()
+            if parent:
+                self._update_parent_check_state(parent)
+
         elif item_type == "change":
             # Individual change item changed
             change = item_data
@@ -704,9 +849,29 @@ class SyncFromHardcoverDialog(QDialog):
             parent = item.parent()
             if parent:
                 self._update_parent_check_state(parent)
+                # Also update grandparent (updates_header) if it exists
+                grandparent = parent.parent()
+                if grandparent:
+                    self._update_parent_check_state(grandparent)
 
         self.changes_tree.blockSignals(False)
         self._update_summary()
+
+    def _set_children_checked(self, item: QTreeWidgetItem, checked: bool):
+        """Recursively set all children to checked/unchecked state."""
+        for i in range(item.childCount()):
+            child = item.child(i)
+            child.setCheckState(0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+            child_data = child.data(0, Qt.ItemDataRole.UserRole)
+            if child_data:
+                child_type, child_obj = child_data
+                if child_type == "new_book":
+                    child_obj.apply = checked
+                elif child_type == "change":
+                    child_obj.apply = checked
+                elif child_type == "book":
+                    # Recurse into book's children (individual changes)
+                    self._set_children_checked(child, checked)
 
     def _update_parent_check_state(self, parent: QTreeWidgetItem):
         """Update parent checkbox based on children states."""
@@ -726,18 +891,36 @@ class SyncFromHardcoverDialog(QDialog):
 
     def _update_summary(self):
         """Update the summary label."""
-        selected = sum(1 for c in self.changes if c.apply)
-        total = len(self.changes)
+        selected_changes = sum(1 for c in self.changes if c.apply)
+        total_changes = len(self.changes)
         books_affected = len({c.calibre_id for c in self.changes if c.apply})
-        self.summary_label.setText(
-            f"<b>{selected}</b> of {total} changes selected ({books_affected} book{'s' if books_affected != 1 else ''})."
-        )
-        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(selected > 0)
+
+        selected_new = sum(1 for b in self.new_books if b.apply)
+        total_new = len(self.new_books)
+
+        parts = []
+        if total_changes > 0:
+            parts.append(
+                f"<b>{selected_changes}</b> of {total_changes} changes "
+                f"({books_affected} book{'s' if books_affected != 1 else ''})"
+            )
+        if total_new > 0:
+            parts.append(f"<b>{selected_new}</b> of {total_new} new books")
+
+        if parts:
+            self.summary_label.setText(" | ".join(parts) + " selected.")
+        else:
+            self.summary_label.setText("No changes to apply.")
+
+        has_selections = selected_changes > 0 or selected_new > 0
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(has_selections)
 
     def _on_apply(self):
-        """Apply the selected changes."""
+        """Apply the selected changes and create new books."""
         changes_to_apply = [c for c in self.changes if c.apply]
-        if not changes_to_apply:
+        new_books_to_create = [b for b in self.new_books if b.apply]
+
+        if not changes_to_apply and not new_books_to_create:
             self.reject()
             return
 
@@ -745,19 +928,39 @@ class SyncFromHardcoverDialog(QDialog):
         self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setEnabled(False)
         self.status_label.setText("Applying changes...")
         self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, len(changes_to_apply))
+        total_operations = len(changes_to_apply) + len(new_books_to_create)
+        self.progress_bar.setRange(0, total_operations)
         self.progress_bar.setValue(0)
         QApplication.processEvents()
 
-        applied = 0
+        applied_changes = 0
+        created_books = 0
         skipped = 0
         errors = []
+        progress = 0
 
-        for i, change in enumerate(changes_to_apply):
+        # Create new books first
+        for new_book in new_books_to_create:
+            try:
+                calibre_id = self._create_calibre_book(new_book)
+                if calibre_id:
+                    created_books += 1
+                else:
+                    skipped += 1
+                    errors.append(f"{new_book.title}: Failed to create book")
+            except Exception as e:
+                errors.append(f"{new_book.title}: {e}")
+
+            progress += 1
+            self.progress_bar.setValue(progress)
+            QApplication.processEvents()
+
+        # Apply changes to existing books
+        for change in changes_to_apply:
             try:
                 success, error_msg = self._apply_change(change)
                 if success:
-                    applied += 1
+                    applied_changes += 1
                 else:
                     skipped += 1
                     if error_msg:
@@ -765,21 +968,24 @@ class SyncFromHardcoverDialog(QDialog):
             except Exception as e:
                 errors.append(f"{change.calibre_title}: {e}")
 
-            self.progress_bar.setValue(i + 1)
+            progress += 1
+            self.progress_bar.setValue(progress)
             QApplication.processEvents()
 
         self.progress_bar.setVisible(False)
 
         # Build result message
         result_parts = []
-        if applied > 0:
-            result_parts.append(f"Applied {applied} change(s)")
+        if created_books > 0:
+            result_parts.append(f"Created {created_books} book(s)")
+        if applied_changes > 0:
+            result_parts.append(f"Applied {applied_changes} change(s)")
         if skipped > 0:
             result_parts.append(f"Skipped {skipped}")
         if errors:
             result_parts.append(f"{len(errors)} error(s)")
 
-        result_msg = ". ".join(result_parts) + "."
+        result_msg = ". ".join(result_parts) + "." if result_parts else "No changes applied."
 
         if errors:
             # Show first few errors
@@ -790,26 +996,33 @@ class SyncFromHardcoverDialog(QDialog):
 
         self.status_label.setText(result_msg)
 
-        if applied > 0:
+        if applied_changes > 0 or created_books > 0:
             # Refresh the library view
             self.gui.library_view.model().refresh()
 
         # Show summary dialog before closing
         from calibre.gui2 import info_dialog
 
+        total_applied = applied_changes + created_books
         if errors:
             info_dialog(
                 self,
                 "Sync Complete (with errors)",
-                f"Applied {applied} change(s), skipped {skipped}, {len(errors)} error(s).\n\n"
+                f"Created {created_books} book(s), applied {applied_changes} change(s), "
+                f"skipped {skipped}, {len(errors)} error(s).\n\n"
                 f"Errors:\n" + "\n".join(errors[:10]),
                 show=True,
             )
-        elif applied > 0:
+        elif total_applied > 0:
+            msg_parts = []
+            if created_books > 0:
+                msg_parts.append(f"created {created_books} new book(s)")
+            if applied_changes > 0:
+                msg_parts.append(f"applied {applied_changes} change(s)")
             info_dialog(
                 self,
                 "Sync Complete",
-                f"Successfully applied {applied} change(s) to your Calibre library.",
+                f"Successfully {' and '.join(msg_parts)} in your Calibre library.",
                 show=True,
             )
         else:
@@ -875,6 +1088,59 @@ class SyncFromHardcoverDialog(QDialog):
 
             tb = traceback.format_exc()
             return False, f"{e}\n\nTraceback:\n{tb}"
+
+    def _create_calibre_book(self, new_book: NewBookAction) -> int | None:
+        """
+        Create a new book in Calibre from Hardcover data.
+
+        Args:
+            new_book: The NewBookAction containing book metadata.
+
+        Returns:
+            The new Calibre book ID, or None if creation failed.
+        """
+        from calibre.ebooks.metadata.book.base import Metadata
+
+        # Create metadata object
+        mi = Metadata(new_book.title)
+
+        # Set authors
+        if new_book.authors:
+            mi.authors = new_book.authors
+        else:
+            mi.authors = ["Unknown"]
+
+        # Set identifiers - link to Hardcover
+        mi.set_identifiers({"hardcover": str(new_book.hardcover_book_id)})
+
+        # Set ISBN if available
+        if new_book.isbn:
+            if len(new_book.isbn) == 13:
+                mi.set_identifier("isbn", new_book.isbn)
+            elif len(new_book.isbn) == 10:
+                mi.set_identifier("isbn", new_book.isbn)
+
+        # Set publication date if available
+        if new_book.release_date:
+            try:
+                from datetime import datetime
+
+                # Parse YYYY-MM-DD or YYYY format
+                if len(new_book.release_date) >= 10:
+                    pub_date = datetime.strptime(new_book.release_date[:10], "%Y-%m-%d")
+                elif len(new_book.release_date) == 4:
+                    pub_date = datetime.strptime(new_book.release_date, "%Y")
+                else:
+                    pub_date = None
+
+                if pub_date:
+                    mi.pubdate = pub_date
+            except (ValueError, TypeError):
+                pass  # Ignore invalid dates
+
+        # Add the book to Calibre
+        book_id = self.db.create_book_entry(mi)
+        return book_id
 
     def _get_custom_column_metadata(self, column: str) -> dict | None:
         """Get metadata for a custom column."""
