@@ -278,7 +278,7 @@ class TestGetUserBooks:
                         "edition_id": 456,
                         "status_id": 3,
                         "rating": 4.5,
-                        "review": "Great book!",
+                        "review_raw": "Great book!",
                         "created_at": "2024-01-01T00:00:00",
                         "updated_at": "2024-01-15T00:00:00",
                         "book": {
@@ -830,7 +830,7 @@ class TestGetUserBooksWithReads:
                         "edition_id": 456,
                         "status_id": 3,
                         "rating": 4.5,
-                        "review": "Great book!",
+                        "review_raw": "Great book!",
                         "created_at": "2024-01-01T00:00:00",
                         "updated_at": "2024-01-15T00:00:00",
                         "book": {
@@ -897,7 +897,7 @@ class TestGetUserBooksWithReads:
                         "edition_id": 456,
                         "status_id": 3,
                         "rating": 5.0,
-                        "review": None,
+                        "review_raw": None,
                         "created_at": "2023-01-01T00:00:00",
                         "updated_at": "2024-06-20T00:00:00",
                         "book": {
@@ -961,7 +961,7 @@ class TestGetUserBooksWithReads:
                         "edition_id": 456,
                         "status_id": 1,  # Want to Read - no reads yet
                         "rating": None,
-                        "review": None,
+                        "review_raw": None,
                         "created_at": "2024-01-01T00:00:00",
                         "updated_at": "2024-01-01T00:00:00",
                         "book": {
@@ -1005,7 +1005,7 @@ class TestGetUserBooksWithReads:
                         "edition_id": 456,
                         "status_id": 3,
                         "rating": 4.0,
-                        "review": None,
+                        "review_raw": None,
                         "created_at": "2024-01-01T00:00:00",
                         "updated_at": "2024-01-15T00:00:00",
                         "book": {
@@ -1052,7 +1052,7 @@ class TestGetUserBookWithReads:
                         "edition_id": 456,
                         "status_id": 2,
                         "rating": None,
-                        "review": None,
+                        "review_raw": None,
                         "created_at": "2024-01-01T00:00:00",
                         "updated_at": "2024-01-10T00:00:00",
                         "user_book_reads": [

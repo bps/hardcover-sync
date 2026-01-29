@@ -121,7 +121,7 @@ query UserBooks($user_id: Int!, $limit: Int!, $offset: Int!) {
         edition_id
         status_id
         rating
-        review
+        review_raw
         created_at
         updated_at
         book {
@@ -168,7 +168,7 @@ query UserBookByBookId($user_id: Int!, $book_id: Int!) {
         edition_id
         status_id
         rating
-        review
+        review_raw
         created_at
         updated_at
         user_book_reads(order_by: {started_at: desc}) {
