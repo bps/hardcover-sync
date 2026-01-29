@@ -37,25 +37,40 @@ class HardcoverSyncAction(InterfaceAction):
         icon = get_icons("images/hardcover_sync.png", "Hardcover Sync")
         self.qaction.setIcon(icon)
 
-        # Build the menu - create it if it doesn't exist
-        self.menu = self.qaction.menu()
-        if self.menu is None:
-            self.menu = QMenu(self.gui)
-            self.qaction.setMenu(self.menu)
-        self.rebuild_menu()
+        # Track if menu needs rebuilding
+        self._menu_needs_rebuild = True
+
+        # Create the menu - we'll populate it in initialization_complete
+        # or when aboutToShow fires
+        self.menu = QMenu(self.gui)
+        self.qaction.setMenu(self.menu)
+
+        # Connect aboutToShow to rebuild menu - ensures it's always fresh
+        self.menu.aboutToShow.connect(self._on_menu_about_to_show)
 
     def initialization_complete(self):
         """Called after GUI is fully initialized."""
-        # Future: could connect to signals here if needed
-        pass
+        # Build the menu now that GUI is ready
+        self._menu_needs_rebuild = True
+        self.rebuild_menu()
+
+    def _on_menu_about_to_show(self):
+        """Called when menu is about to be shown."""
+        if self._menu_needs_rebuild:
+            self.rebuild_menu()
+
+    def mark_menu_for_rebuild(self):
+        """Mark the menu to be rebuilt on next show."""
+        self._menu_needs_rebuild = True
 
     def library_changed(self, db):
         """Called when the library is changed."""
-        # Invalidate any caches
-        pass
+        # Invalidate any caches and mark menu for rebuild
+        self._menu_needs_rebuild = True
 
     def rebuild_menu(self):
         """Rebuild the plugin menu."""
+        self._menu_needs_rebuild = False
         self.menu.clear()
         prefs = get_plugin_prefs()
 
@@ -489,8 +504,8 @@ class HardcoverSyncAction(InterfaceAction):
     def show_configuration(self):
         """Show the plugin configuration dialog."""
         if self.interface_action_base_plugin.do_user_config(self.gui, plugin_action=self):
-            # User clicked OK - rebuild menu in case token was added/changed
-            self.rebuild_menu()
+            # User clicked OK - mark menu for rebuild in case token was added/changed
+            self.mark_menu_for_rebuild()
 
     def show_help(self):
         """Show help documentation."""
