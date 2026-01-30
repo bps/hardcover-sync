@@ -14,9 +14,13 @@ install: && setenv
 setenv:
     -calibre-debug scripts/build_env.py
 
-# Run unit tests
+# Run unit tests (excludes Qt widget tests by default)
 test *ARGS:
     LD_LIBRARY_PATH="${CALIBRE_LIBRARY_PATH:-}" uv run pytest {{ARGS}}
+
+# Run Qt widget tests (requires display)
+test-qt *ARGS:
+    LD_LIBRARY_PATH="${CALIBRE_LIBRARY_PATH:-}" uv run pytest test/qt_tests/ -o "addopts=-v" {{ARGS}}
 
 # Run tests with coverage report
 coverage *ARGS:
