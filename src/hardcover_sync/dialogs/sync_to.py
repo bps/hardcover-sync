@@ -4,8 +4,6 @@ Sync to Hardcover dialog.
 This dialog syncs data from Calibre to Hardcover for selected books.
 """
 
-from dataclasses import dataclass
-
 # Qt imports - only available in Calibre's runtime environment
 from qt.core import (
     QAbstractItemView,
@@ -26,65 +24,10 @@ from qt.core import (
 
 from ..api import HardcoverAPI, UserBook
 from ..config import READING_STATUSES, STATUS_IDS, get_plugin_prefs
-
-
-def format_rating_as_stars(rating: float | None) -> str:
-    """
-    Format a rating (0-5 scale) as star characters.
-
-    Args:
-        rating: Rating value from 0-5, or None.
-
-    Returns:
-        String like "★★★★½" or "(empty)" if None.
-    """
-    if rating is None:
-        return "(empty)"
-
-    full_stars = int(rating)
-    half_star = (rating - full_stars) >= 0.5
-
-    result = "★" * full_stars
-    if half_star:
-        result += "½"
-
-    # Pad with empty stars for visual consistency
-    empty_stars = 5 - full_stars - (1 if half_star else 0)
-    result += "☆" * empty_stars
-
-    return result or "☆☆☆☆☆"  # Show empty stars for 0 rating
-
-
-@dataclass
-class SyncToChange:
-    """Represents a change to be synced from Calibre to Hardcover."""
-
-    calibre_id: int
-    calibre_title: str
-    hardcover_book_id: int
-    user_book_id: int | None  # None if not in Hardcover library yet
-    field: str  # status, rating, progress, date_started, date_read, review
-    old_value: str | None  # Current Hardcover value (for display)
-    new_value: str | None  # New value from Calibre (for display)
-    raw_value: str | None = None  # Raw value for API (if different from display)
-    apply: bool = True
-
-    @property
-    def api_value(self) -> str | None:
-        """Get the value to send to the API."""
-        return self.raw_value if self.raw_value is not None else self.new_value
-
-    @property
-    def display_field(self) -> str:
-        """Get a display-friendly field name."""
-        return {
-            "status": "Reading Status",
-            "rating": "Rating",
-            "progress": "Progress",
-            "date_started": "Date Started",
-            "date_read": "Date Read",
-            "review": "Review",
-        }.get(self.field, self.field)
+from ..sync import (
+    SyncToChange,
+    format_rating_as_stars,
+)
 
 
 class SyncToHardcoverDialog(QDialog):
@@ -436,7 +379,7 @@ class SyncToHardcoverDialog(QDialog):
                                 field="rating",
                                 old_value=format_rating_as_stars(hc_current_rating),
                                 new_value=format_rating_as_stars(hc_new_rating),
-                                raw_value=str(hc_new_rating),
+                                api_value=hc_new_rating,
                             )
                         )
                         book_has_changes = True

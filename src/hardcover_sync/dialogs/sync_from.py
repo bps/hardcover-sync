@@ -4,8 +4,6 @@ Sync from Hardcover dialog.
 This dialog fetches the user's Hardcover library and syncs data to Calibre.
 """
 
-from dataclasses import dataclass
-
 # Qt imports - only available in Calibre's runtime environment
 from qt.core import (
     QAbstractItemView,
@@ -27,82 +25,11 @@ from qt.core import (
 
 from ..api import HardcoverAPI, UserBook
 from ..config import READING_STATUSES, get_plugin_prefs
-
-
-def format_rating_as_stars(rating: float | None) -> str:
-    """
-    Format a rating (0-5 scale) as star characters.
-
-    Args:
-        rating: Rating value from 0-5, or None.
-
-    Returns:
-        String like "★★★★½" or "(empty)" if None.
-    """
-    if rating is None:
-        return "(empty)"
-
-    full_stars = int(rating)
-    half_star = (rating - full_stars) >= 0.5
-
-    result = "★" * full_stars
-    if half_star:
-        result += "½"
-
-    # Pad with empty stars for visual consistency
-    empty_stars = 5 - full_stars - (1 if half_star else 0)
-    result += "☆" * empty_stars
-
-    return result or "☆☆☆☆☆"  # Show empty stars for 0 rating
-
-
-@dataclass
-class SyncChange:
-    """Represents a change to be synced from Hardcover to Calibre."""
-
-    calibre_id: int
-    calibre_title: str
-    hardcover_book_id: int
-    field: str  # status, rating, progress, date_started, date_read, review
-    old_value: str | None  # Display value (e.g., stars for rating)
-    new_value: str | None  # Display value (e.g., stars for rating)
-    raw_value: str | None = None  # Raw value for applying (if different from display)
-    apply: bool = True  # Whether to apply this change
-
-    @property
-    def api_value(self) -> str | None:
-        """Get the value to apply to Calibre."""
-        return self.raw_value if self.raw_value is not None else self.new_value
-
-    @property
-    def display_field(self) -> str:
-        """Get a display-friendly field name."""
-        return {
-            "status": "Reading Status",
-            "rating": "Rating",
-            "progress": "Progress",
-            "date_started": "Date Started",
-            "date_read": "Date Read",
-            "review": "Review",
-        }.get(self.field, self.field)
-
-
-@dataclass
-class NewBookAction:
-    """Represents a new book to create in Calibre from Hardcover."""
-
-    hardcover_book_id: int
-    title: str
-    authors: list[str]
-    user_book: UserBook
-    isbn: str | None = None
-    release_date: str | None = None
-    apply: bool = True
-
-    @property
-    def author_string(self) -> str:
-        """Get authors as a comma-separated string."""
-        return ", ".join(self.authors) if self.authors else "Unknown"
+from ..sync import (
+    NewBookAction,
+    SyncChange,
+    format_rating_as_stars,
+)
 
 
 class SyncFromHardcoverDialog(QDialog):
