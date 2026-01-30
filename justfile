@@ -18,6 +18,11 @@ setenv:
 test *ARGS:
     LD_LIBRARY_PATH="${CALIBRE_LIBRARY_PATH:-}" uv run pytest {{ARGS}}
 
+# Run tests with coverage report
+coverage *ARGS:
+    LD_LIBRARY_PATH="${CALIBRE_LIBRARY_PATH:-}" uv run pytest --cov --cov-report=term-missing --cov-report=html {{ARGS}}
+    @echo "HTML report: htmlcov/index.html"
+
 # Run linter and auto-fix issues
 lint:
     uv run ruff check --fix src/ test/

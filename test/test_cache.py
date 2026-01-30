@@ -176,3 +176,219 @@ class TestGetCache:
 
         cache = get_cache(mock_db)
         assert cache._db is mock_db
+
+    def test_get_cache_updates_existing_db(self):
+        """Test that get_cache updates db on existing cache."""
+        import hardcover_sync.cache as cache_module
+
+        cache_module._cache = None
+
+        mock_db1 = MagicMock()
+        mock_db1.new_api.pref.return_value = None
+        mock_db2 = MagicMock()
+        mock_db2.new_api.pref.return_value = None
+
+        cache1 = get_cache(mock_db1)
+        cache2 = get_cache(mock_db2)
+
+        assert cache1 is cache2
+        assert cache2._db is mock_db2
+
+
+class TestCacheSerialization:
+    """Tests for cache serialization/deserialization."""
+
+    def test_serialize_isbn_cache(self):
+        """Test ISBN cache serialization."""
+        cache = HardcoverCache()
+        cache.set_isbn("9780123456789", 100, 200, "Test Book")
+
+        result = cache._serialize_isbn_cache()
+        assert "9780123456789" in result
+        assert result["9780123456789"]["hardcover_id"] == 100
+        assert result["9780123456789"]["edition_id"] == 200
+        assert result["9780123456789"]["title"] == "Test Book"
+        assert "cached_at" in result["9780123456789"]
+
+    def test_serialize_isbn_cache_excludes_expired(self):
+        """Test that expired entries are excluded from serialization."""
+        cache = HardcoverCache()
+
+        # Add an expired entry directly
+        expired_time = datetime.now() - timedelta(hours=CACHE_EXPIRY_HOURS + 1)
+        cache._isbn_cache["9780123456789"] = CachedBook(
+            hardcover_id=100,
+            edition_id=None,
+            title="Expired",
+            isbn="9780123456789",
+            cached_at=expired_time,
+        )
+
+        result = cache._serialize_isbn_cache()
+        assert "9780123456789" not in result
+
+    def test_load_isbn_cache(self):
+        """Test ISBN cache deserialization."""
+        cache = HardcoverCache()
+
+        data = {
+            "9780123456789": {
+                "hardcover_id": 100,
+                "edition_id": 200,
+                "title": "Test Book",
+                "cached_at": datetime.now().isoformat(),
+            }
+        }
+        cache._load_isbn_cache(data)
+
+        book = cache.get_by_isbn("9780123456789")
+        assert book is not None
+        assert book.hardcover_id == 100
+        assert book.edition_id == 200
+
+    def test_load_isbn_cache_skips_expired(self):
+        """Test that expired entries are skipped during load."""
+        cache = HardcoverCache()
+
+        expired_time = datetime.now() - timedelta(hours=CACHE_EXPIRY_HOURS + 1)
+        data = {
+            "9780123456789": {
+                "hardcover_id": 100,
+                "edition_id": None,
+                "title": "Expired",
+                "cached_at": expired_time.isoformat(),
+            }
+        }
+        cache._load_isbn_cache(data)
+
+        assert cache.get_by_isbn("9780123456789") is None
+
+    def test_load_isbn_cache_skips_invalid(self):
+        """Test that invalid entries are skipped during load."""
+        cache = HardcoverCache()
+
+        data = {
+            "9780123456789": {"invalid": "data"},  # Missing required fields
+            "9780111111111": {
+                "hardcover_id": 200,
+                "title": "Valid",
+                "cached_at": "not-a-date",  # Invalid date
+            },
+        }
+        cache._load_isbn_cache(data)
+
+        assert cache.get_by_isbn("9780123456789") is None
+        assert cache.get_by_isbn("9780111111111") is None
+
+    def test_serialize_library_cache(self):
+        """Test library cache serialization."""
+        cache = HardcoverCache()
+        cache.set_library([{"book_id": 1, "status_id": 3}])
+
+        result = cache._serialize_library_cache()
+        assert "cached_at" in result
+        assert "books" in result
+        assert "1" in result["books"]  # Keys are stringified
+        assert result["books"]["1"]["status_id"] == 3
+
+    def test_serialize_library_cache_empty_when_expired(self):
+        """Test that expired library cache serializes to empty."""
+        cache = HardcoverCache()
+        cache.set_library([{"book_id": 1}])
+
+        # Expire the cache
+        cache._library_cached_at = datetime.now() - timedelta(hours=CACHE_EXPIRY_HOURS + 1)
+
+        result = cache._serialize_library_cache()
+        assert result == {}
+
+    def test_serialize_library_cache_empty_when_not_set(self):
+        """Test that unset library cache serializes to empty."""
+        cache = HardcoverCache()
+        result = cache._serialize_library_cache()
+        assert result == {}
+
+    def test_load_library_cache(self):
+        """Test library cache deserialization."""
+        cache = HardcoverCache()
+
+        data = {
+            "cached_at": datetime.now().isoformat(),
+            "books": {"1": {"book_id": 1, "status_id": 3}},
+        }
+        cache._load_library_cache(data)
+
+        assert cache.is_library_cached()
+        assert cache.get_library_book(1) is not None
+
+    def test_load_library_cache_skips_expired(self):
+        """Test that expired library cache is not loaded."""
+        cache = HardcoverCache()
+
+        expired_time = datetime.now() - timedelta(hours=CACHE_EXPIRY_HOURS + 1)
+        data = {
+            "cached_at": expired_time.isoformat(),
+            "books": {"1": {"book_id": 1}},
+        }
+        cache._load_library_cache(data)
+
+        assert not cache.is_library_cached()
+
+    def test_load_library_cache_invalid_date(self):
+        """Test that invalid cached_at is handled."""
+        cache = HardcoverCache()
+
+        data = {
+            "cached_at": "not-a-date",
+            "books": {"1": {"book_id": 1}},
+        }
+        cache._load_library_cache(data)
+
+        assert not cache.is_library_cached()
+
+    def test_load_library_cache_no_cached_at(self):
+        """Test that missing cached_at is handled."""
+        cache = HardcoverCache()
+
+        data = {"books": {"1": {"book_id": 1}}}
+        cache._load_library_cache(data)
+
+        assert not cache.is_library_cached()
+
+
+class TestCacheEdgeCases:
+    """Tests for edge cases in cache operations."""
+
+    def test_remove_isbn_nonexistent(self):
+        """Test removing an ISBN that doesn't exist."""
+        cache = HardcoverCache()
+        # Should not raise
+        cache.remove_isbn("9780123456789")
+
+    def test_remove_library_book_nonexistent(self):
+        """Test removing a library book that doesn't exist."""
+        cache = HardcoverCache()
+        cache.set_library([{"book_id": 1}])
+        # Should not raise
+        cache.remove_library_book(999)
+        # Original book should still be there
+        assert cache.get_library_book(1) is not None
+
+    def test_cached_book_without_edition_id(self):
+        """Test CachedBook with None edition_id."""
+        book = CachedBook(
+            hardcover_id=123,
+            edition_id=None,
+            title="Test Book",
+            isbn="9780123456789",
+            cached_at=datetime.now(),
+        )
+        assert book.edition_id is None
+
+    def test_is_library_cached_false_when_empty(self):
+        """Test is_library_cached returns False when empty even with timestamp."""
+        cache = HardcoverCache()
+        cache._library_cached_at = datetime.now()
+        cache._library_cache = {}
+
+        assert not cache.is_library_cached()
