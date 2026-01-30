@@ -61,15 +61,11 @@ dev = [
     "ruff>=0.8",
     "lefthook>=1.8",
     "gitlint>=0.19",
-    "pytest-qt>=4.5.0",
-    "pyqt6>=6.10.2",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
-# Disable pytest-qt by default; use `just test-qt` for Qt widget tests
-addopts = "--cov=src/hardcover_sync -v --import-mode=importlib -p no:qt --ignore=test/qt_tests"
-qt_api = "pyqt6"
+addopts = "--cov=src/hardcover_sync -v --import-mode=importlib"
 
 [tool.coverage.run]
 branch = true
@@ -86,7 +82,6 @@ ignore = ["UP007"]  # Allow X | Y union syntax
 
 [tool.ruff.lint.per-file-ignores]
 "test/*.py" = ["S101"]  # Allow assert in tests
-"test/**/*.py" = ["S101"]  # Allow assert in all test subdirectories
 
 [tool.pyright]
 typeCheckingMode = "standard"
