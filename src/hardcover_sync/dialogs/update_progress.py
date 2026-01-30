@@ -197,13 +197,24 @@ class UpdateProgressDialog(QDialog):
 
         self.button_box.setEnabled(True)
 
+        if errors:
+            from calibre.gui2 import error_dialog
+
+            error_dialog(
+                self,
+                "Update Progress Error",
+                f"Failed to update {len(errors)} book(s):",
+                det_msg="\n".join(errors),
+                show=True,
+            )
+
         if success > 0:
             self.status_label.setText(f"Updated {success} book(s).")
             # Refresh library view
             self.gui.library_view.model().refresh()
             self.accept()
         else:
-            self.status_label.setText(f"Error: {errors[0]}" if errors else "Unknown error.")
+            self.status_label.setText("No books were updated.")
 
     def _update_calibre_progress(self, book_id: int, column: str, page_num: int):
         """Update the progress column in Calibre."""
