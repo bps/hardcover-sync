@@ -69,7 +69,15 @@ addopts = "--cov=src/hardcover_sync -v --import-mode=importlib"
 
 [tool.coverage.run]
 branch = true
-omit = ["*test*", "*_version*"]
+omit = [
+    "*test*",
+    "*_version*",
+    # Qt-dependent files (require Calibre runtime)
+    "*/dialogs/*",
+    "*/action.py",
+    "*/config.py",
+    "*/__init__.py",
+]
 source = ["src/hardcover_sync"]
 
 [tool.ruff]
