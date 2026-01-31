@@ -4,7 +4,7 @@ Tests for the sync module.
 This tests the extracted business logic for syncing between Hardcover and Calibre.
 """
 
-from hardcover_sync.api import Author, Book, Edition, UserBook
+from hardcover_sync.models import Author, Book, Edition, UserBook
 from hardcover_sync.sync import (
     NewBookAction,
     SyncChange,
@@ -64,11 +64,20 @@ class TestSyncChange:
 
     def test_display_field_mapping(self):
         """Test display_field property."""
-        fields = ["status", "rating", "progress", "date_started", "date_read", "review"]
+        fields = [
+            "status",
+            "rating",
+            "progress",
+            "progress_percent",
+            "date_started",
+            "date_read",
+            "review",
+        ]
         expected = [
             "Reading Status",
             "Rating",
-            "Progress",
+            "Progress (pages)",
+            "Progress (%)",
             "Date Started",
             "Date Read",
             "Review",
@@ -564,3 +573,347 @@ class TestFindNewBooks:
         new_books = find_new_books(hc_books, hc_to_calibre, sync_statuses=[])
 
         assert len(new_books) == 2
+
+    def test_isbn_from_edition(self):
+        """Test getting ISBN from user's specific edition."""
+        book = Book(
+            id=100,
+            title="Test Book",
+            slug="test-book",
+            editions=[Edition(id=2, isbn_13="9781111111111")],  # Book edition
+        )
+        # User's specific edition with its own ISBN
+        edition = Edition(id=1, isbn_13="9780123456789")
+        hc_book = UserBook(
+            id=1,
+            book_id=100,
+            status_id=1,
+            book=book,
+            edition=edition,
+        )
+        hc_to_calibre = {}
+
+        new_books = find_new_books([hc_book], hc_to_calibre)
+
+        assert len(new_books) == 1
+        # Should use the user's edition ISBN, not the book's edition ISBN
+        assert new_books[0].isbn == "9780123456789"
+
+    def test_isbn_from_edition_isbn10(self):
+        """Test getting ISBN-10 from user's edition when no ISBN-13."""
+        book = Book(id=100, title="Test Book", slug="test-book")
+        edition = Edition(id=1, isbn_10="0123456789")  # Only ISBN-10
+        hc_book = UserBook(
+            id=1,
+            book_id=100,
+            status_id=1,
+            book=book,
+            edition=edition,
+        )
+        hc_to_calibre = {}
+
+        new_books = find_new_books([hc_book], hc_to_calibre)
+
+        assert len(new_books) == 1
+        assert new_books[0].isbn == "0123456789"
+
+    def test_isbn_fallback_to_book_editions(self):
+        """Test falling back to book editions when user edition has no ISBN."""
+        book = Book(
+            id=100,
+            title="Test Book",
+            slug="test-book",
+            editions=[
+                Edition(id=2, isbn_13="9781111111111"),
+            ],
+        )
+        # User's edition has no ISBN
+        edition = Edition(id=1, isbn_13=None, isbn_10=None)
+        hc_book = UserBook(
+            id=1,
+            book_id=100,
+            status_id=1,
+            book=book,
+            edition=edition,
+        )
+        hc_to_calibre = {}
+
+        new_books = find_new_books([hc_book], hc_to_calibre)
+
+        assert len(new_books) == 1
+        # Should fall back to book edition ISBN
+        assert new_books[0].isbn == "9781111111111"
+
+    def test_isbn_fallback_to_book_editions_isbn10(self):
+        """Test falling back to book edition ISBN-10."""
+        book = Book(
+            id=100,
+            title="Test Book",
+            slug="test-book",
+            editions=[
+                Edition(id=2, isbn_10="0987654321"),  # Only ISBN-10 available
+            ],
+        )
+        hc_book = UserBook(
+            id=1,
+            book_id=100,
+            status_id=1,
+            book=book,
+            edition=None,  # No user edition
+        )
+        hc_to_calibre = {}
+
+        new_books = find_new_books([hc_book], hc_to_calibre)
+
+        assert len(new_books) == 1
+        assert new_books[0].isbn == "0987654321"
+
+
+class TestFindSyncFromChangesProgress:
+    """Tests for progress sync in find_sync_from_changes."""
+
+    def create_user_book_with_reads(
+        self,
+        book_id: int,
+        progress_pages: int = None,
+        progress: float = None,
+        started_at: str = None,
+        finished_at: str = None,
+    ) -> UserBook:
+        """Helper to create a UserBook with reads for testing."""
+        from hardcover_sync.models import UserBookRead
+
+        reads = []
+        if progress_pages is not None or progress is not None or started_at or finished_at:
+            reads.append(
+                UserBookRead(
+                    id=1,
+                    progress_pages=progress_pages,
+                    progress=progress,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+            )
+
+        return UserBook(
+            id=1,
+            book_id=book_id,
+            status_id=2,  # Currently reading
+            reads=reads if reads else None,
+        )
+
+    def test_progress_pages_change(self):
+        """Test detecting progress pages changes."""
+        hc_books = [self.create_user_book_with_reads(100, progress_pages=150)]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            if col == "progress_col":
+                return "100"  # Current value differs from 150
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "progress_column": "progress_col",
+            "sync_progress": True,
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        assert len(changes) == 1
+        assert changes[0].field == "progress"
+        assert changes[0].old_value == "100"
+        assert changes[0].new_value == "150"
+
+    def test_progress_percent_change(self):
+        """Test detecting progress percent changes."""
+        hc_books = [self.create_user_book_with_reads(100, progress=0.75)]  # 75%
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            if col == "progress_pct_col":
+                return 50.0  # Current is 50%, should change to 75%
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "progress_percent_column": "progress_pct_col",
+            "sync_progress": True,
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        assert len(changes) == 1
+        assert changes[0].field == "progress_percent"
+        assert "50.0%" in changes[0].old_value
+        assert "75.0%" in changes[0].new_value
+
+    def test_progress_percent_empty_to_value(self):
+        """Test progress percent change from empty to value."""
+        hc_books = [self.create_user_book_with_reads(100, progress=0.25)]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            return None  # No current value
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "progress_percent_column": "progress_pct_col",
+            "sync_progress": True,
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        assert len(changes) == 1
+        assert changes[0].field == "progress_percent"
+        assert changes[0].old_value == "(empty)"
+        assert "25.0%" in changes[0].new_value
+
+
+class TestFindSyncFromChangesDates:
+    """Tests for date sync in find_sync_from_changes."""
+
+    def create_user_book_with_reads(
+        self,
+        book_id: int,
+        started_at: str = None,
+        finished_at: str = None,
+    ) -> UserBook:
+        """Helper to create a UserBook with reads for testing."""
+        from hardcover_sync.models import UserBookRead
+
+        reads = []
+        if started_at or finished_at:
+            reads.append(
+                UserBookRead(
+                    id=1,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+            )
+
+        return UserBook(
+            id=1,
+            book_id=book_id,
+            status_id=3,
+            reads=reads if reads else None,
+        )
+
+    def test_date_started_change(self):
+        """Test detecting date started changes."""
+        hc_books = [self.create_user_book_with_reads(100, started_at="2024-03-15T10:00:00")]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            if col == "date_started_col":
+                return "2024-01-01"  # Different date
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "date_started_column": "date_started_col",
+            "sync_dates": True,
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        assert len(changes) == 1
+        assert changes[0].field == "date_started"
+        assert changes[0].old_value == "2024-01-01"
+        assert changes[0].new_value == "2024-03-15"
+
+    def test_date_read_change(self):
+        """Test detecting date read changes."""
+        hc_books = [self.create_user_book_with_reads(100, finished_at="2024-06-20")]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            if col == "date_read_col":
+                return "2024-05-01"  # Different date
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "date_read_column": "date_read_col",
+            "sync_dates": True,
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        assert len(changes) == 1
+        assert changes[0].field == "date_read"
+        assert changes[0].old_value == "2024-05-01"
+        assert changes[0].new_value == "2024-06-20"
+
+    def test_date_started_empty_to_value(self):
+        """Test date started change from empty to value."""
+        hc_books = [self.create_user_book_with_reads(100, started_at="2024-03-15")]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            return None  # No current value
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "date_started_column": "date_started_col",
+            "sync_dates": True,
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        assert len(changes) == 1
+        assert changes[0].field == "date_started"
+        assert changes[0].old_value == "(empty)"
+        assert changes[0].new_value == "2024-03-15"
+
+    def test_date_read_empty_to_value(self):
+        """Test date read change from empty to value."""
+        hc_books = [self.create_user_book_with_reads(100, finished_at="2024-06-20")]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "date_read_column": "date_read_col",
+            "sync_dates": True,
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        assert len(changes) == 1
+        assert changes[0].field == "date_read"
+        assert changes[0].old_value == "(empty)"
+        assert changes[0].new_value == "2024-06-20"
+
+
+class TestConvertRatingFromCalibreOtherColumn:
+    """Test rating conversion for non-standard column names."""
+
+    def test_other_column_type(self):
+        """Test rating conversion for columns that aren't built-in or custom."""
+        # This covers line 181 - the else branch for non-standard column names
+        result = convert_rating_from_calibre(4.0, "my_custom_field")
+        assert result == 4.0

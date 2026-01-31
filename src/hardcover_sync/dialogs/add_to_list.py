@@ -5,7 +5,6 @@ This dialog allows the user to add selected books to a Hardcover list.
 """
 
 from qt.core import (
-    QDialog,
     QDialogButtonBox,
     QLabel,
     QListWidget,
@@ -15,12 +14,11 @@ from qt.core import (
     Qt,
 )
 
-from ..api import HardcoverAPI, List as HardcoverList
-from ..config import get_plugin_prefs
-from ..matcher import get_hardcover_id
+from .base import HardcoverDialogBase
+from ..models import List as HardcoverList
 
 
-class AddToListDialog(QDialog):
+class AddToListDialog(HardcoverDialogBase):
     """
     Dialog for adding books to a Hardcover list.
 
@@ -36,12 +34,7 @@ class AddToListDialog(QDialog):
             plugin_action: The plugin's InterfaceAction.
             book_ids: List of Calibre book IDs to add to list.
         """
-        super().__init__(parent)
-        self.plugin_action = plugin_action
-        self.gui = plugin_action.gui
-        self.db = self.gui.current_db.new_api
-        self.prefs = get_plugin_prefs()
-        self.book_ids = book_ids
+        super().__init__(parent, plugin_action, book_ids)
         self.lists: list[HardcoverList] = []
 
         # Get book info
@@ -54,37 +47,13 @@ class AddToListDialog(QDialog):
         self._setup_ui()
         self._load_lists()
 
-    def _get_book_info(self) -> list[dict]:
-        """Get info about books to add."""
-        books = []
-        for book_id in self.book_ids:
-            hc_id = get_hardcover_id(self.db, book_id)
-            if hc_id:
-                title = self.db.field_for("title", book_id) or "Unknown"
-                books.append(
-                    {
-                        "calibre_id": book_id,
-                        "hardcover_id": hc_id,
-                        "title": title,
-                    }
-                )
-        return books
-
     def _setup_ui(self):
         """Setup the dialog UI."""
         layout = QVBoxLayout(self)
 
         # Check if any books are linked
         if not self.book_info:
-            label = QLabel(
-                "None of the selected books are linked to Hardcover.\n"
-                "Use 'Link to Hardcover' first."
-            )
-            layout.addWidget(label)
-
-            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-            button_box.rejected.connect(self.reject)
-            layout.addWidget(button_box)
+            self._setup_not_linked_ui(layout)
             return
 
         # Show which book(s) will be added
@@ -115,14 +84,6 @@ class AddToListDialog(QDialog):
 
         # Enable OK button when selection changes
         self.list_widget.itemSelectionChanged.connect(self._on_selection_changed)
-
-    def _get_api(self) -> HardcoverAPI | None:
-        """Get an API instance with the configured token."""
-        token = self.prefs.get("api_token", "")
-        if not token:
-            self.status_label.setText("Error: No API token configured.")
-            return None
-        return HardcoverAPI(token=token)
 
     def _load_lists(self):
         """Load the user's lists from Hardcover."""

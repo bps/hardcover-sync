@@ -5,7 +5,6 @@ This dialog allows the user to update reading progress for selected books.
 """
 
 from qt.core import (
-    QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
@@ -14,12 +13,10 @@ from qt.core import (
     QApplication,
 )
 
-from ..api import HardcoverAPI
-from ..config import get_plugin_prefs
-from ..matcher import get_hardcover_id
+from .base import HardcoverDialogBase
 
 
-class UpdateProgressDialog(QDialog):
+class UpdateProgressDialog(HardcoverDialogBase):
     """
     Dialog for updating reading progress on Hardcover.
 
@@ -35,12 +32,7 @@ class UpdateProgressDialog(QDialog):
             plugin_action: The plugin's InterfaceAction.
             book_ids: List of Calibre book IDs to update.
         """
-        super().__init__(parent)
-        self.plugin_action = plugin_action
-        self.gui = plugin_action.gui
-        self.db = self.gui.current_db.new_api
-        self.prefs = get_plugin_prefs()
-        self.book_ids = book_ids
+        super().__init__(parent, plugin_action, book_ids)
 
         # Get book info
         self.book_info = self._get_book_info()
@@ -50,37 +42,13 @@ class UpdateProgressDialog(QDialog):
 
         self._setup_ui()
 
-    def _get_book_info(self) -> list[dict]:
-        """Get info about books to update."""
-        books = []
-        for book_id in self.book_ids:
-            hc_id = get_hardcover_id(self.db, book_id)
-            if hc_id:
-                title = self.db.field_for("title", book_id) or "Unknown"
-                books.append(
-                    {
-                        "calibre_id": book_id,
-                        "hardcover_id": hc_id,
-                        "title": title,
-                    }
-                )
-        return books
-
     def _setup_ui(self):
         """Setup the dialog UI."""
         layout = QVBoxLayout(self)
 
         # Check if any books are linked
         if not self.book_info:
-            label = QLabel(
-                "None of the selected books are linked to Hardcover.\n"
-                "Use 'Link to Hardcover' first."
-            )
-            layout.addWidget(label)
-
-            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-            button_box.rejected.connect(self.reject)
-            layout.addWidget(button_box)
+            self._setup_not_linked_ui(layout)
             return
 
         # Show which book(s) will be updated
@@ -129,14 +97,6 @@ class UpdateProgressDialog(QDialog):
         if len(self.book_info) == 1:
             self._load_current_progress()
 
-    def _get_api(self) -> HardcoverAPI | None:
-        """Get an API instance with the configured token."""
-        token = self.prefs.get("api_token", "")
-        if not token:
-            self.status_label.setText("Error: No API token configured.")
-            return None
-        return HardcoverAPI(token=token)
-
     def _load_current_progress(self):
         """Load current progress from Hardcover for single book."""
         api = self._get_api()
@@ -146,8 +106,8 @@ class UpdateProgressDialog(QDialog):
         try:
             hc_id = self.book_info[0]["hardcover_id"]
             user_book = api.get_user_book(hc_id)
-            if user_book and user_book.progress_pages:
-                self.page_spinbox.setValue(user_book.progress_pages)
+            if user_book and user_book.current_progress_pages:
+                self.page_spinbox.setValue(user_book.current_progress_pages)
         except Exception:  # noqa: S110
             pass  # Non-critical: just show default values if we can't load current progress
 
@@ -172,18 +132,35 @@ class UpdateProgressDialog(QDialog):
                 user_book = api.get_user_book(book["hardcover_id"])
 
                 if user_book:
-                    # Update existing entry
-                    api.update_user_book(
-                        user_book.id,
-                        progress_pages=page_num if page_num > 0 else None,
-                    )
+                    # Update progress via user_book_reads
+                    if page_num > 0:
+                        if user_book.latest_read:
+                            # Update existing read entry
+                            api.update_user_book_read(
+                                user_book.latest_read.id,
+                                progress_pages=page_num,
+                            )
+                        else:
+                            # Create new read entry
+                            api.insert_user_book_read(
+                                user_book.id,
+                                progress_pages=page_num,
+                            )
+                    elif user_book.latest_read:
+                        # Clear progress by deleting the read entry
+                        api.delete_user_book_read(user_book.latest_read.id)
                 else:
                     # Add to library with "Currently Reading" status
-                    api.add_book_to_library(
+                    new_user_book = api.add_book_to_library(
                         book_id=book["hardcover_id"],
                         status_id=2,  # Currently Reading
-                        progress_pages=page_num if page_num > 0 else None,
                     )
+                    # Add progress via a read entry
+                    if page_num > 0:
+                        api.insert_user_book_read(
+                            new_user_book.id,
+                            progress_pages=page_num,
+                        )
 
                 # Update Calibre column if configured
                 progress_col = self.prefs.get("progress_column")

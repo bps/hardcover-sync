@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from .models import clean_isbn
+
 if TYPE_CHECKING:
     from calibre.library.database2 import LibraryDatabase2  # noqa: F401
 
@@ -162,15 +164,15 @@ class HardcoverCache:
         Returns:
             CachedBook if found and not expired, None otherwise.
         """
-        clean_isbn = isbn.replace("-", "").replace(" ", "")
-        book = self._isbn_cache.get(clean_isbn)
+        isbn = clean_isbn(isbn)
+        book = self._isbn_cache.get(isbn)
 
         if book and not self._is_expired(book.cached_at):
             return book
 
         # Remove expired entry
         if book:
-            del self._isbn_cache[clean_isbn]
+            del self._isbn_cache[isbn]
 
         return None
 
@@ -190,21 +192,21 @@ class HardcoverCache:
             edition_id: Optional Hardcover edition ID.
             title: The book title.
         """
-        clean_isbn = isbn.replace("-", "").replace(" ", "")
-        self._isbn_cache[clean_isbn] = CachedBook(
+        isbn = clean_isbn(isbn)
+        self._isbn_cache[isbn] = CachedBook(
             hardcover_id=hardcover_id,
             edition_id=edition_id,
             title=title,
-            isbn=clean_isbn,
+            isbn=isbn,
             cached_at=datetime.now(),
         )
         self._save_cache()
 
     def remove_isbn(self, isbn: str):
         """Remove an ISBN from the cache."""
-        clean_isbn = isbn.replace("-", "").replace(" ", "")
-        if clean_isbn in self._isbn_cache:
-            del self._isbn_cache[clean_isbn]
+        isbn = clean_isbn(isbn)
+        if isbn in self._isbn_cache:
+            del self._isbn_cache[isbn]
             self._save_cache()
 
     # =========================================================================

@@ -332,10 +332,13 @@ class TestAddBookToLibrary:
         mock_client.return_value.execute.return_value = {
             "insert_user_book": {
                 "id": 1001,
-                "book_id": 789,
-                "status_id": 1,
-                "rating": None,
-                "updated_at": "2024-01-01T00:00:00",
+                "user_book": {
+                    "id": 1001,
+                    "book_id": 789,
+                    "status_id": 1,
+                    "rating": None,
+                    "updated_at": "2024-01-01T00:00:00",
+                },
             }
         }
 
@@ -353,15 +356,14 @@ class TestUpdateUserBook:
         """Test updating book status."""
         mock_client.return_value.execute.return_value = {
             "update_user_book": {
-                "returning": [
-                    {
-                        "id": 1001,
-                        "book_id": 789,
-                        "status_id": 3,
-                        "rating": 5,
-                        "updated_at": "2024-01-15T00:00:00",
-                    }
-                ]
+                "id": 1001,
+                "user_book": {
+                    "id": 1001,
+                    "book_id": 789,
+                    "status_id": 3,
+                    "rating": 5,
+                    "updated_at": "2024-01-15T00:00:00",
+                },
             }
         }
 
@@ -372,7 +374,9 @@ class TestUpdateUserBook:
 
     def test_update_no_data(self, api, mock_client):
         """Test update when no data returned."""
-        mock_client.return_value.execute.return_value = {"update_user_book": {"returning": []}}
+        mock_client.return_value.execute.return_value = {
+            "update_user_book": {"id": None, "user_book": None}
+        }
 
         with pytest.raises(HardcoverAPIError):
             api.update_user_book(user_book_id=1001, status_id=3)
@@ -383,7 +387,7 @@ class TestRemoveBookFromLibrary:
 
     def test_remove_book(self, api, mock_client):
         """Test removing a book from library."""
-        mock_client.return_value.execute.return_value = {"delete_user_book": {"affected_rows": 1}}
+        mock_client.return_value.execute.return_value = {"delete_user_book": {"id": 1001}}
 
         result = api.remove_book_from_library(user_book_id=1001)
 
@@ -391,7 +395,7 @@ class TestRemoveBookFromLibrary:
 
     def test_remove_book_not_found(self, api, mock_client):
         """Test removing a book that doesn't exist."""
-        mock_client.return_value.execute.return_value = {"delete_user_book": {"affected_rows": 0}}
+        mock_client.return_value.execute.return_value = {"delete_user_book": {"id": None}}
 
         result = api.remove_book_from_library(user_book_id=9999)
 
@@ -529,8 +533,8 @@ class TestDryRunMode:
         log = dry_run_api.get_dry_run_log()
         assert len(log) == 1
         assert log[0]["operation"] == "add_book_to_library"
-        assert log[0]["variables"]["book_id"] == 123
-        assert log[0]["variables"]["status_id"] == 1
+        assert log[0]["variables"]["object"]["book_id"] == 123
+        assert log[0]["variables"]["object"]["status_id"] == 1
 
     def test_dry_run_update_user_book(self, dry_run_api, mock_client):
         """Test that update_user_book is logged but not executed in dry-run mode."""
@@ -546,7 +550,7 @@ class TestDryRunMode:
         assert len(log) == 1
         assert log[0]["operation"] == "update_user_book"
         assert log[0]["variables"]["id"] == 456
-        assert log[0]["variables"]["status_id"] == 3
+        assert log[0]["variables"]["object"]["status_id"] == 3
 
     def test_dry_run_remove_book_from_library(self, dry_run_api, mock_client):
         """Test that remove_book_from_library is logged but not executed in dry-run mode."""
@@ -1077,3 +1081,373 @@ class TestGetUserBookWithReads:
         assert user_book.latest_started_at == "2024-01-05"
         assert user_book.latest_finished_at is None
         assert user_book.current_progress_pages == 75
+
+
+# =============================================================================
+# User Book Read CRUD Tests
+# =============================================================================
+
+
+class TestInsertUserBookRead:
+    """Tests for the insert_user_book_read method."""
+
+    def test_insert_user_book_read(self, api, mock_client):
+        """Test inserting a new reading session."""
+        mock_client.return_value.execute.return_value = {
+            "insert_user_book_read": {
+                "id": 200,
+                "user_book_read": {
+                    "id": 200,
+                    "started_at": "2024-06-01",
+                    "finished_at": None,
+                    "paused_at": None,
+                    "progress": 0.25,
+                    "progress_pages": 75,
+                    "edition_id": 456,
+                },
+            }
+        }
+
+        read = api.insert_user_book_read(
+            user_book_id=1001,
+            started_at="2024-06-01",
+            progress_pages=75,
+            progress=0.25,
+            edition_id=456,
+        )
+
+        assert read.id == 200
+        assert read.started_at == "2024-06-01"
+        assert read.progress_pages == 75
+        assert read.progress == 0.25
+        assert read.edition_id == 456
+
+    def test_dry_run_insert_user_book_read(self, mock_client):
+        """Test that insert_user_book_read is logged in dry-run mode."""
+        api = HardcoverAPI(token="test-token", dry_run=True)  # noqa: S106
+
+        read = api.insert_user_book_read(
+            user_book_id=1001,
+            started_at="2024-06-01",
+            progress_pages=100,
+        )
+
+        mock_client.return_value.execute.assert_not_called()
+        assert read.id == -1
+        assert read.progress_pages == 100
+
+        log = api.get_dry_run_log()
+        assert len(log) == 1
+        assert log[0]["operation"] == "insert_user_book_read"
+
+
+class TestUpdateUserBookRead:
+    """Tests for the update_user_book_read method."""
+
+    def test_update_user_book_read(self, api, mock_client):
+        """Test updating a reading session."""
+        mock_client.return_value.execute.return_value = {
+            "update_user_book_read": {
+                "id": 200,
+                "user_book_read": {
+                    "id": 200,
+                    "started_at": "2024-06-01",
+                    "finished_at": "2024-06-15",
+                    "paused_at": None,
+                    "progress": 1.0,
+                    "progress_pages": 300,
+                    "edition_id": 456,
+                },
+            }
+        }
+
+        read = api.update_user_book_read(
+            read_id=200,
+            finished_at="2024-06-15",
+            progress=1.0,
+            progress_pages=300,
+        )
+
+        assert read.id == 200
+        assert read.finished_at == "2024-06-15"
+        assert read.progress == 1.0
+        assert read.progress_pages == 300
+
+    def test_update_user_book_read_no_data(self, api, mock_client):
+        """Test update when no data returned."""
+        mock_client.return_value.execute.return_value = {
+            "update_user_book_read": {"id": None, "user_book_read": None}
+        }
+
+        with pytest.raises(HardcoverAPIError):
+            api.update_user_book_read(read_id=200, progress_pages=100)
+
+    def test_dry_run_update_user_book_read(self, mock_client):
+        """Test that update_user_book_read is logged in dry-run mode."""
+        api = HardcoverAPI(token="test-token", dry_run=True)  # noqa: S106
+
+        read = api.update_user_book_read(read_id=200, progress_pages=150)
+
+        mock_client.return_value.execute.assert_not_called()
+        assert read.id == 200
+        assert read.progress_pages == 150
+
+        log = api.get_dry_run_log()
+        assert len(log) == 1
+        assert log[0]["operation"] == "update_user_book_read"
+
+
+class TestDeleteUserBookRead:
+    """Tests for the delete_user_book_read method."""
+
+    def test_delete_user_book_read(self, api, mock_client):
+        """Test deleting a reading session."""
+        mock_client.return_value.execute.return_value = {"delete_user_book_read": {"id": 200}}
+
+        result = api.delete_user_book_read(read_id=200)
+
+        assert result is True
+
+    def test_delete_user_book_read_not_found(self, api, mock_client):
+        """Test deleting a reading session that doesn't exist."""
+        mock_client.return_value.execute.return_value = {"delete_user_book_read": {"id": None}}
+
+        result = api.delete_user_book_read(read_id=9999)
+
+        assert result is False
+
+    def test_dry_run_delete_user_book_read(self, mock_client):
+        """Test that delete_user_book_read is logged in dry-run mode."""
+        api = HardcoverAPI(token="test-token", dry_run=True)  # noqa: S106
+
+        result = api.delete_user_book_read(read_id=200)
+
+        mock_client.return_value.execute.assert_not_called()
+        assert result is True
+
+        log = api.get_dry_run_log()
+        assert len(log) == 1
+        assert log[0]["operation"] == "delete_user_book_read"
+
+
+# =============================================================================
+# Book Lookup Tests (Additional)
+# =============================================================================
+
+
+class TestGetBookById:
+    """Tests for the get_book_by_id method."""
+
+    def test_get_book_by_id(self, api, mock_client):
+        """Test getting a book by ID."""
+        mock_client.return_value.execute.return_value = {
+            "books": [
+                {
+                    "id": 789,
+                    "title": "The Great Gatsby",
+                    "slug": "the-great-gatsby",
+                    "release_date": "1925-04-10",
+                    "contributions": [{"author": {"id": 111, "name": "F. Scott Fitzgerald"}}],
+                    "editions": [
+                        {
+                            "id": 456,
+                            "isbn_13": "9780743273565",
+                            "isbn_10": "0743273567",
+                            "title": "The Great Gatsby (Scribner)",
+                            "pages": 180,
+                        }
+                    ],
+                }
+            ]
+        }
+
+        book = api.get_book_by_id(789)
+
+        assert book is not None
+        assert book.id == 789
+        assert book.title == "The Great Gatsby"
+        assert book.release_date == "1925-04-10"
+        assert len(book.authors) == 1
+        assert book.authors[0].name == "F. Scott Fitzgerald"
+        assert len(book.editions) == 1
+        assert book.editions[0].isbn_13 == "9780743273565"
+
+    def test_get_book_by_id_not_found(self, api, mock_client):
+        """Test getting a book that doesn't exist."""
+        mock_client.return_value.execute.return_value = {"books": []}
+
+        book = api.get_book_by_id(99999)
+
+        assert book is None
+
+
+class TestGetBookLists:
+    """Tests for the get_book_lists method."""
+
+    def test_get_book_lists(self, api, mock_client):
+        """Test getting lists that contain a book."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {
+                "list_books": [
+                    {
+                        "id": 1,
+                        "list": {
+                            "id": 10,
+                            "name": "Favorites",
+                            "slug": "favorites",
+                        },
+                    },
+                    {
+                        "id": 2,
+                        "list": {
+                            "id": 20,
+                            "name": "Classics",
+                            "slug": "classics",
+                        },
+                    },
+                ]
+            },
+        ]
+
+        lists = api.get_book_lists(book_id=789)
+
+        assert len(lists) == 2
+        assert lists[0].id == 10
+        assert lists[0].name == "Favorites"
+        assert lists[1].id == 20
+        assert lists[1].name == "Classics"
+
+    def test_get_book_lists_empty(self, api, mock_client):
+        """Test getting lists for a book not in any lists."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {"list_books": []},
+        ]
+
+        lists = api.get_book_lists(book_id=789)
+
+        assert lists == []
+
+
+# =============================================================================
+# Search Books Edge Cases
+# =============================================================================
+
+
+class TestSearchBooksEdgeCases:
+    """Tests for search_books edge cases."""
+
+    def test_search_books_legacy_list_format(self, api, mock_client):
+        """Test search with legacy list format results."""
+        mock_client.return_value.execute.return_value = {
+            "search": {
+                "results": [
+                    {
+                        "id": 1,
+                        "title": "Test Book",
+                        "slug": "test-book",
+                        "release_year": 2020,
+                        "author_names": ["Test Author"],
+                        "isbns": [],
+                    }
+                ]
+            }
+        }
+
+        books = api.search_books("Test")
+
+        assert len(books) == 1
+        assert books[0].title == "Test Book"
+
+    def test_search_books_null_results(self, api, mock_client):
+        """Test search with null items in results."""
+        mock_client.return_value.execute.return_value = {
+            "search": {
+                "results": {
+                    "hits": [
+                        {"document": None},
+                        {
+                            "document": {
+                                "id": 1,
+                                "title": "Valid Book",
+                                "slug": "valid-book",
+                                "author_names": [],
+                                "isbns": [],
+                            }
+                        },
+                    ]
+                }
+            }
+        }
+
+        books = api.search_books("Test")
+
+        assert len(books) == 1
+        assert books[0].title == "Valid Book"
+
+    def test_search_books_isbn_10_parsing(self, api, mock_client):
+        """Test search with ISBN-10 in results."""
+        mock_client.return_value.execute.return_value = {
+            "search": {
+                "results": {
+                    "hits": [
+                        {
+                            "document": {
+                                "id": 1,
+                                "title": "Test Book",
+                                "slug": "test-book",
+                                "author_names": [],
+                                "isbns": ["0316769177"],  # ISBN-10
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+
+        books = api.search_books("Test")
+
+        assert len(books) == 1
+        assert len(books[0].editions) == 1
+        assert books[0].editions[0].isbn_10 == "0316769177"
+
+    def test_search_books_no_release_year(self, api, mock_client):
+        """Test search with missing release_year."""
+        mock_client.return_value.execute.return_value = {
+            "search": {
+                "results": {
+                    "hits": [
+                        {
+                            "document": {
+                                "id": 1,
+                                "title": "Test Book",
+                                "slug": "test-book",
+                                "author_names": [],
+                                "isbns": [],
+                                "release_year": None,
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+
+        books = api.search_books("Test")
+
+        assert len(books) == 1
+        assert books[0].release_date is None

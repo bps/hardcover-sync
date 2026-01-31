@@ -5,7 +5,7 @@ Tests for the matcher module.
 from unittest.mock import MagicMock, patch
 
 
-from hardcover_sync.api import Author, Book, Edition
+from hardcover_sync.models import Author, Book, Edition
 from hardcover_sync.matcher import (
     MatchResult,
     _calculate_match_confidence,

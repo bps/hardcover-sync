@@ -83,7 +83,7 @@ class TestAPIListMethods:
 
     def test_list_dataclass(self):
         """Test creating a List instance."""
-        from hardcover_sync.api import List
+        from hardcover_sync.models import List
 
         lst = List(
             id=1,
@@ -101,7 +101,7 @@ class TestAPIListMethods:
 
     def test_list_dataclass_defaults(self):
         """Test List dataclass with default values."""
-        from hardcover_sync.api import List
+        from hardcover_sync.models import List
 
         lst = List(id=1, name="Test List")
 
@@ -111,7 +111,7 @@ class TestAPIListMethods:
 
     def test_user_book_has_progress_fields(self):
         """Test that UserBook has progress-related fields."""
-        from hardcover_sync.api import UserBook
+        from hardcover_sync.models import UserBook
 
         ub = UserBook(
             id=1,
@@ -175,13 +175,13 @@ class TestAPIListDryRun:
 class TestProgressUpdateAPI:
     """Tests for progress update via API."""
 
-    def test_update_user_book_progress_dry_run(self):
-        """Test updating progress in dry-run mode."""
+    def test_update_user_book_status_dry_run(self):
+        """Test updating status in dry-run mode."""
         from hardcover_sync.api import HardcoverAPI
 
         api = HardcoverAPI(token="test-token", dry_run=True)  # noqa: S106
 
-        result = api.update_user_book(user_book_id=123, progress_pages=150)
+        result = api.update_user_book(user_book_id=123, status_id=3)
 
         assert result.id == 123
 
@@ -189,10 +189,10 @@ class TestProgressUpdateAPI:
         assert len(log) == 1
         assert log[0]["operation"] == "update_user_book"
         assert log[0]["variables"]["id"] == 123
-        assert log[0]["variables"]["progress_pages"] == 150
+        assert log[0]["variables"]["object"]["status_id"] == 3
 
-    def test_add_book_with_progress_dry_run(self):
-        """Test adding a book with initial progress in dry-run mode."""
+    def test_add_book_dry_run(self):
+        """Test adding a book in dry-run mode."""
         from hardcover_sync.api import HardcoverAPI
 
         api = HardcoverAPI(token="test-token", dry_run=True)  # noqa: S106
@@ -200,7 +200,6 @@ class TestProgressUpdateAPI:
         result = api.add_book_to_library(
             book_id=100,
             status_id=2,  # Currently Reading
-            progress_pages=50,
         )
 
         assert result.book_id == 100
@@ -208,6 +207,5 @@ class TestProgressUpdateAPI:
         log = api.get_dry_run_log()
         assert len(log) == 1
         assert log[0]["operation"] == "add_book_to_library"
-        assert log[0]["variables"]["book_id"] == 100
-        assert log[0]["variables"]["status_id"] == 2
-        assert log[0]["variables"]["progress_pages"] == 50
+        assert log[0]["variables"]["object"]["book_id"] == 100
+        assert log[0]["variables"]["object"]["status_id"] == 2

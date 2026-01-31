@@ -5,11 +5,24 @@ This module contains the core business logic for syncing data between
 Hardcover and Calibre, extracted from the dialog classes for testability.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .api import UserBook
+from .models import UserBook
 from .config import READING_STATUSES, STATUS_IDS
+
+
+# Display names for sync field types
+FIELD_DISPLAY_NAMES = {
+    "status": "Reading Status",
+    "rating": "Rating",
+    "progress": "Progress (pages)",
+    "progress_percent": "Progress (%)",
+    "date_started": "Date Started",
+    "date_read": "Date Read",
+    "review": "Review",
+}
 
 
 @dataclass
@@ -19,7 +32,7 @@ class SyncChange:
     calibre_id: int
     calibre_title: str
     hardcover_book_id: int
-    field: str  # status, rating, progress, date_started, date_read, review
+    field: str  # status, rating, progress, progress_percent, date_started, date_read, review
     old_value: str | None  # Display value (e.g., stars for rating)
     new_value: str | None  # Display value (e.g., stars for rating)
     raw_value: str | None = None  # Raw value for applying (if different from display)
@@ -33,14 +46,7 @@ class SyncChange:
     @property
     def display_field(self) -> str:
         """Get a display-friendly field name."""
-        return {
-            "status": "Reading Status",
-            "rating": "Rating",
-            "progress": "Progress",
-            "date_started": "Date Started",
-            "date_read": "Date Read",
-            "review": "Review",
-        }.get(self.field, self.field)
+        return FIELD_DISPLAY_NAMES.get(self.field, self.field)
 
 
 @dataclass
@@ -51,7 +57,7 @@ class SyncToChange:
     calibre_title: str
     hardcover_book_id: int
     user_book_id: int | None  # None if book not in Hardcover library
-    field: str  # status, rating, progress, date_started, date_read, review
+    field: str  # status, rating, progress, progress_percent, date_started, date_read, review
     old_value: str | None
     new_value: str | None
     api_value: Any = None  # The value to send to the API
@@ -60,14 +66,7 @@ class SyncToChange:
     @property
     def display_field(self) -> str:
         """Get a display-friendly field name."""
-        return {
-            "status": "Reading Status",
-            "rating": "Rating",
-            "progress": "Progress",
-            "date_started": "Date Started",
-            "date_read": "Date Read",
-            "review": "Review",
-        }.get(self.field, self.field)
+        return FIELD_DISPLAY_NAMES.get(self.field, self.field)
 
 
 @dataclass
@@ -251,10 +250,10 @@ def extract_date(date_str: str | None) -> str | None:
 def find_sync_from_changes(
     hardcover_books: list[UserBook],
     hc_to_calibre: dict[int, int],
-    get_calibre_value: callable,
-    get_calibre_title: callable,
+    get_calibre_value: Callable[[int, str], Any],
+    get_calibre_title: Callable[[int], str],
     prefs: dict,
-    get_column_metadata: callable = None,
+    get_column_metadata: Callable[[str], dict | None] | None = None,
 ) -> list[SyncChange]:
     """
     Find all changes to sync from Hardcover to Calibre.
@@ -276,6 +275,7 @@ def find_sync_from_changes(
     status_col = prefs.get("status_column", "")
     rating_col = prefs.get("rating_column", "")
     progress_col = prefs.get("progress_column", "")
+    progress_percent_col = prefs.get("progress_percent_column", "")
     date_started_col = prefs.get("date_started_column", "")
     date_read_col = prefs.get("date_read_column", "")
     review_col = prefs.get("review_column", "")
@@ -347,6 +347,27 @@ def find_sync_from_changes(
                         field="progress",
                         old_value=str(current) if current else "(empty)",
                         new_value=new_progress,
+                    )
+                )
+
+        # Check progress percent
+        current_progress_pct = hc_book.current_progress_percent
+        if sync_progress and progress_percent_col and current_progress_pct is not None:
+            current = get_calibre_value(calibre_id, progress_percent_col)
+            new_progress_pct = round(current_progress_pct, 1)
+            current_rounded = round(float(current), 1) if current else None
+            if current_rounded != new_progress_pct:
+                changes.append(
+                    SyncChange(
+                        calibre_id=calibre_id,
+                        calibre_title=calibre_title,
+                        hardcover_book_id=hc_book.book_id,
+                        field="progress_percent",
+                        old_value=f"{current_rounded}%"
+                        if current_rounded is not None
+                        else "(empty)",
+                        new_value=f"{new_progress_pct}%",
+                        raw_value=str(new_progress_pct),
                     )
                 )
 

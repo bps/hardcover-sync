@@ -22,10 +22,12 @@ from qt.core import (
     Qt,
 )
 
-from ..api import HardcoverAPI, UserBook
+from ..api import HardcoverAPI
 from ..config import READING_STATUSES, STATUS_IDS, get_plugin_prefs
+from ..models import UserBook
 from ..sync import (
     SyncToChange,
+    convert_rating_from_calibre,
     format_rating_as_stars,
 )
 
@@ -272,6 +274,7 @@ class SyncToHardcoverDialog(QDialog):
         status_col = self.prefs.get("status_column", "")
         rating_col = self.prefs.get("rating_column", "")
         progress_col = self.prefs.get("progress_column", "")
+        progress_percent_col = self.prefs.get("progress_percent_column", "")
         date_started_col = self.prefs.get("date_started_column", "")
         date_read_col = self.prefs.get("date_read_column", "")
         review_col = self.prefs.get("review_column", "")
@@ -308,7 +311,8 @@ class SyncToHardcoverDialog(QDialog):
             # Fetch current Hardcover data for this book
             try:
                 hc_user_book = api.get_user_book(hc_book_id)
-                self.hardcover_data[hc_book_id] = hc_user_book
+                if hc_user_book:
+                    self.hardcover_data[hc_book_id] = hc_user_book
             except Exception:
                 api_errors += 1
                 hc_user_book = None
@@ -352,21 +356,10 @@ class SyncToHardcoverDialog(QDialog):
                 calibre_rating = self._get_calibre_value(book_id, rating_col)
                 if calibre_rating is not None:
                     # Convert Calibre rating to Hardcover scale (0-5)
-                    # Both built-in rating and custom rating columns use 0-10 internally
-                    if rating_col == "rating":
-                        # Built-in rating is 0-10
-                        hc_new_rating = calibre_rating / 2 if calibre_rating else None
-                    elif rating_col.startswith("#"):
-                        # Custom column - check if it's a rating type
-                        col_info = self._get_custom_column_metadata(rating_col)
-                        if col_info and col_info.get("datatype") == "rating":
-                            # Custom rating columns also use 0-10 internally
-                            hc_new_rating = calibre_rating / 2 if calibre_rating else None
-                        else:
-                            # Other column types (int, float) - assume already 0-5
-                            hc_new_rating = float(calibre_rating)
-                    else:
-                        hc_new_rating = float(calibre_rating)
+                    col_info = self._get_custom_column_metadata(rating_col)
+                    hc_new_rating = convert_rating_from_calibre(
+                        calibre_rating, rating_col, col_info
+                    )
 
                     hc_current_rating = hc_user_book.rating if hc_user_book else None
                     if hc_new_rating != hc_current_rating:
@@ -384,11 +377,13 @@ class SyncToHardcoverDialog(QDialog):
                         )
                         book_has_changes = True
 
-            # Compare progress
+            # Compare progress (pages)
             if progress_col:
                 calibre_progress = self._get_calibre_value(book_id, progress_col)
                 if calibre_progress is not None:
-                    hc_current_progress = hc_user_book.progress_pages if hc_user_book else None
+                    hc_current_progress = (
+                        hc_user_book.current_progress_pages if hc_user_book else None
+                    )
                     if calibre_progress != hc_current_progress:
                         self.changes.append(
                             SyncToChange(
@@ -405,14 +400,37 @@ class SyncToHardcoverDialog(QDialog):
                         )
                         book_has_changes = True
 
+            # Compare progress (percent)
+            if progress_percent_col:
+                calibre_progress_pct = self._get_calibre_value(book_id, progress_percent_col)
+                if calibre_progress_pct is not None:
+                    hc_current_pct = hc_user_book.current_progress_percent if hc_user_book else None
+                    # Round for comparison
+                    calibre_rounded = round(float(calibre_progress_pct), 1)
+                    hc_rounded = round(hc_current_pct, 1) if hc_current_pct is not None else None
+                    if calibre_rounded != hc_rounded:
+                        self.changes.append(
+                            SyncToChange(
+                                calibre_id=book_id,
+                                calibre_title=calibre_title,
+                                hardcover_book_id=hc_book_id,
+                                user_book_id=user_book_id,
+                                field="progress_percent",
+                                old_value=f"{hc_rounded}%" if hc_rounded is not None else "(empty)",
+                                new_value=f"{calibre_rounded}%",
+                                api_value=calibre_rounded / 100,  # Convert to 0.0-1.0 for API
+                            )
+                        )
+                        book_has_changes = True
+
             # Compare date started
             if date_started_col:
                 calibre_date = self._get_calibre_value(book_id, date_started_col)
                 if calibre_date:
                     calibre_date_str = str(calibre_date)[:10]
                     hc_current_date = (
-                        hc_user_book.started_at[:10]
-                        if hc_user_book and hc_user_book.started_at
+                        hc_user_book.latest_started_at[:10]
+                        if hc_user_book and hc_user_book.latest_started_at
                         else None
                     )
                     if calibre_date_str != hc_current_date:
@@ -435,8 +453,8 @@ class SyncToHardcoverDialog(QDialog):
                 if calibre_date:
                     calibre_date_str = str(calibre_date)[:10]
                     hc_current_date = (
-                        hc_user_book.finished_at[:10]
-                        if hc_user_book and hc_user_book.finished_at
+                        hc_user_book.latest_finished_at[:10]
+                        if hc_user_book and hc_user_book.latest_finished_at
                         else None
                     )
                     if calibre_date_str != hc_current_date:
@@ -691,45 +709,67 @@ class SyncToHardcoverDialog(QDialog):
         Returns:
             Tuple of (success, error_message).
         """
-        # Build the update data
-        update_data: dict = {}
+        # Separate user_book data from read data
+        # User book: status, rating, review
+        # Read: progress_pages, started_at, finished_at
+        user_book_data: dict = {}
+        read_data: dict = {}
         status_mappings = self.prefs.get("status_mappings", {})
         calibre_to_hc_status = {v: int(k) for k, v in status_mappings.items()}
 
         for change in changes:
-            if change.field == "status":
+            if change.field == "status" and change.new_value:
                 status_id = calibre_to_hc_status.get(change.new_value)
                 if status_id is None:
                     status_id = STATUS_IDS.get(change.new_value)
                 if status_id:
-                    update_data["status_id"] = status_id
+                    user_book_data["status_id"] = status_id
             elif change.field == "rating":
-                update_data["rating"] = float(change.api_value) if change.api_value else None
+                user_book_data["rating"] = float(change.api_value) if change.api_value else None
             elif change.field == "progress":
-                update_data["progress_pages"] = int(change.api_value) if change.api_value else None
+                read_data["progress_pages"] = int(change.api_value) if change.api_value else None
+            elif change.field == "progress_percent":
+                # api_value is already 0.0-1.0 decimal
+                read_data["progress"] = float(change.api_value) if change.api_value else None
             elif change.field == "date_started":
-                update_data["started_at"] = change.api_value
+                read_data["started_at"] = change.api_value
             elif change.field == "date_read":
-                update_data["finished_at"] = change.api_value
+                read_data["finished_at"] = change.api_value
             elif change.field == "review":
-                update_data["review"] = change.api_value
+                user_book_data["review"] = change.api_value
 
-        if not update_data:
+        if not user_book_data and not read_data:
             return False, "No valid update data"
 
         try:
-            # Either update existing or add new
+            created_user_book = None
+
+            # Either update existing or add new user_book
             if user_book_id:
-                # Update existing user_book
-                api.update_user_book(user_book_id, **update_data)
+                # Update existing user_book with non-read data
+                if user_book_data:
+                    api.update_user_book(user_book_id, **user_book_data)
             else:
                 # Need to add book to library first
-                status_id = update_data.pop("status_id", 1)  # Default to "Want to Read"
-                api.add_book_to_library(
+                status_id = user_book_data.pop("status_id", 1)  # Default to "Want to Read"
+                created_user_book = api.add_book_to_library(
                     book_id=hc_book_id,
                     status_id=status_id,
-                    **update_data,
+                    **user_book_data,
                 )
+                user_book_id = created_user_book.id
+
+            # Handle read data (progress, dates) via user_book_reads API
+            if read_data and user_book_id:
+                # Get the existing user book to check for latest read
+                hc_user_book = self.hardcover_data.get(hc_book_id)
+                if hc_user_book and hc_user_book.latest_read:
+                    # Update existing read
+                    api.update_user_book_read(hc_user_book.latest_read.id, **read_data)
+                else:
+                    # Create new read
+                    api.insert_user_book_read(user_book_id, **read_data)
+
             return True, None
 
         except Exception as e:

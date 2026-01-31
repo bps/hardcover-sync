@@ -312,6 +312,6 @@ class TestDryRunMutations:
         assert "operation" in entry
         assert "variables" in entry
         assert "would_execute" in entry
-        assert entry["variables"]["book_id"] == 100
-        assert entry["variables"]["status_id"] == 2
+        assert entry["variables"]["object"]["book_id"] == 100
+        assert entry["variables"]["object"]["status_id"] == 2
         print(f"\n  Log entry: {entry}")

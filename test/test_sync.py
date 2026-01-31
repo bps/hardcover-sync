@@ -72,7 +72,8 @@ class TestSyncChange:
         test_cases = [
             ("status", "Reading Status"),
             ("rating", "Rating"),
-            ("progress", "Progress"),
+            ("progress", "Progress (pages)"),
+            ("progress_percent", "Progress (%)"),
             ("date_started", "Date Started"),
             ("date_read", "Date Read"),
             ("review", "Review"),
@@ -161,7 +162,8 @@ class TestSyncToChange:
         test_cases = [
             ("status", "Reading Status"),
             ("rating", "Rating"),
-            ("progress", "Progress"),
+            ("progress", "Progress (pages)"),
+            ("progress_percent", "Progress (%)"),
             ("date_started", "Date Started"),
             ("date_read", "Date Read"),
             ("review", "Review"),

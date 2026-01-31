@@ -7,7 +7,6 @@ This dialog allows the user to remove selected books from a Hardcover list.
 from dataclasses import dataclass
 
 from qt.core import (
-    QDialog,
     QDialogButtonBox,
     QLabel,
     QListWidget,
@@ -17,9 +16,8 @@ from qt.core import (
     Qt,
 )
 
-from ..api import HardcoverAPI
-from ..config import get_plugin_prefs
-from ..matcher import get_hardcover_id
+from .base import HardcoverDialogBase
+from ..queries import BOOK_LISTS_QUERY
 
 
 @dataclass
@@ -31,7 +29,7 @@ class ListBookInfo:
     list_book_id: int  # The ID needed to remove the book from the list
 
 
-class RemoveFromListDialog(QDialog):
+class RemoveFromListDialog(HardcoverDialogBase):
     """
     Dialog for removing books from a Hardcover list.
 
@@ -47,12 +45,7 @@ class RemoveFromListDialog(QDialog):
             plugin_action: The plugin's InterfaceAction.
             book_ids: List of Calibre book IDs to remove from lists.
         """
-        super().__init__(parent)
-        self.plugin_action = plugin_action
-        self.gui = plugin_action.gui
-        self.db = self.gui.current_db.new_api
-        self.prefs = get_plugin_prefs()
-        self.book_ids = book_ids
+        super().__init__(parent, plugin_action, book_ids)
         self.list_memberships: dict[int, list[ListBookInfo]] = {}  # list_id -> list of memberships
 
         # Get book info
@@ -65,37 +58,13 @@ class RemoveFromListDialog(QDialog):
         self._setup_ui()
         self._load_list_memberships()
 
-    def _get_book_info(self) -> list[dict]:
-        """Get info about books to remove from lists."""
-        books = []
-        for book_id in self.book_ids:
-            hc_id = get_hardcover_id(self.db, book_id)
-            if hc_id:
-                title = self.db.field_for("title", book_id) or "Unknown"
-                books.append(
-                    {
-                        "calibre_id": book_id,
-                        "hardcover_id": hc_id,
-                        "title": title,
-                    }
-                )
-        return books
-
     def _setup_ui(self):
         """Setup the dialog UI."""
         layout = QVBoxLayout(self)
 
         # Check if any books are linked
         if not self.book_info:
-            label = QLabel(
-                "None of the selected books are linked to Hardcover.\n"
-                "Use 'Link to Hardcover' first."
-            )
-            layout.addWidget(label)
-
-            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-            button_box.rejected.connect(self.reject)
-            layout.addWidget(button_box)
+            self._setup_not_linked_ui(layout)
             return
 
         # Show which book(s) will be processed
@@ -128,14 +97,6 @@ class RemoveFromListDialog(QDialog):
         # Enable OK button when selection changes
         self.list_widget.itemSelectionChanged.connect(self._on_selection_changed)
 
-    def _get_api(self) -> HardcoverAPI | None:
-        """Get an API instance with the configured token."""
-        token = self.prefs.get("api_token", "")
-        if not token:
-            self.status_label.setText("Error: No API token configured.")
-            return None
-        return HardcoverAPI(token=token)
-
     def _load_list_memberships(self):
         """Load which lists contain the selected books."""
         if not self.book_info:
@@ -152,23 +113,7 @@ class RemoveFromListDialog(QDialog):
             # For each book, find which lists contain it
             for book in self.book_info:
                 result = api._execute(
-                    """
-                    query BookLists($book_id: Int!, $user_id: Int!) {
-                        list_books(
-                            where: {
-                                book_id: {_eq: $book_id},
-                                list: {user_id: {_eq: $user_id}}
-                            }
-                        ) {
-                            id
-                            list_id
-                            list {
-                                id
-                                name
-                            }
-                        }
-                    }
-                    """,
+                    BOOK_LISTS_QUERY,
                     {"book_id": book["hardcover_id"], "user_id": api.get_me().id},
                 )
 

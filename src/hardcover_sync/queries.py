@@ -147,6 +147,8 @@ query UserBooks($user_id: Int!, $limit: Int!, $offset: Int!) {
             id
             started_at
             finished_at
+            paused_at
+            progress
             progress_pages
             edition_id
         }
@@ -175,6 +177,8 @@ query UserBookByBookId($user_id: Int!, $book_id: Int!) {
             id
             started_at
             finished_at
+            paused_at
+            progress
             progress_pages
             edition_id
         }
@@ -187,59 +191,25 @@ query UserBookByBookId($user_id: Int!, $book_id: Int!) {
 # =============================================================================
 
 INSERT_USER_BOOK_MUTATION = """
-mutation InsertUserBook(
-    $book_id: Int!,
-    $edition_id: Int,
-    $status_id: Int!,
-    $rating: numeric,
-    $progress_pages: Int,
-    $started_at: date,
-    $finished_at: date,
-    $review: String
-) {
-    insert_user_book(
-        object: {
-            book_id: $book_id,
-            edition_id: $edition_id,
-            status_id: $status_id,
-            rating: $rating,
-            progress_pages: $progress_pages,
-            started_at: $started_at,
-            finished_at: $finished_at,
-            review: $review
-        }
-    ) {
+mutation InsertUserBook($object: UserBookCreateInput!) {
+    insert_user_book(object: $object) {
         id
-        book_id
-        status_id
-        rating
-        updated_at
+        user_book {
+            id
+            book_id
+            status_id
+            rating
+            updated_at
+        }
     }
 }
 """
 
 UPDATE_USER_BOOK_MUTATION = """
-mutation UpdateUserBook(
-    $id: Int!,
-    $status_id: Int,
-    $rating: numeric,
-    $progress_pages: Int,
-    $started_at: date,
-    $finished_at: date,
-    $review: String
-) {
-    update_user_book(
-        where: {id: {_eq: $id}},
-        _set: {
-            status_id: $status_id,
-            rating: $rating,
-            progress_pages: $progress_pages,
-            started_at: $started_at,
-            finished_at: $finished_at,
-            review: $review
-        }
-    ) {
-        returning {
+mutation UpdateUserBook($id: Int!, $object: UserBookUpdateInput!) {
+    update_user_book(id: $id, object: $object) {
+        id
+        user_book {
             id
             book_id
             status_id
@@ -252,8 +222,10 @@ mutation UpdateUserBook(
 
 DELETE_USER_BOOK_MUTATION = """
 mutation DeleteUserBook($id: Int!) {
-    delete_user_book(where: {id: {_eq: $id}}) {
-        affected_rows
+    delete_user_book(id: $id) {
+        id
+        book_id
+        user_id
     }
 }
 """
@@ -332,6 +304,52 @@ REMOVE_BOOK_FROM_LIST_MUTATION = """
 mutation RemoveBookFromList($list_book_id: Int!) {
     delete_list_book(where: {id: {_eq: $list_book_id}}) {
         affected_rows
+    }
+}
+"""
+
+# =============================================================================
+# User Book Read Mutations (Progress Tracking)
+# =============================================================================
+
+INSERT_USER_BOOK_READ_MUTATION = """
+mutation InsertUserBookRead($user_book_id: Int!, $user_book_read: DatesReadInput!) {
+    insert_user_book_read(user_book_id: $user_book_id, user_book_read: $user_book_read) {
+        id
+        user_book_read {
+            id
+            started_at
+            finished_at
+            paused_at
+            progress
+            progress_pages
+            edition_id
+        }
+    }
+}
+"""
+
+UPDATE_USER_BOOK_READ_MUTATION = """
+mutation UpdateUserBookRead($id: Int!, $object: DatesReadInput!) {
+    update_user_book_read(id: $id, object: $object) {
+        id
+        user_book_read {
+            id
+            started_at
+            finished_at
+            paused_at
+            progress
+            progress_pages
+            edition_id
+        }
+    }
+}
+"""
+
+DELETE_USER_BOOK_READ_MUTATION = """
+mutation DeleteUserBookRead($id: Int!) {
+    delete_user_book_read(id: $id) {
+        id
     }
 }
 """

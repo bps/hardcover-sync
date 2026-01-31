@@ -117,6 +117,15 @@ class TestDefaultPrefs:
         assert "status_mappings" in DEFAULT_PREFS
         assert DEFAULT_PREFS["status_mappings"] == {}
 
+    def test_default_prefs_lab_features(self):
+        """Test that Lab feature flags have defaults."""
+        from hardcover_sync.config import DEFAULT_PREFS
+
+        assert "enable_lab_update_progress" in DEFAULT_PREFS
+        assert DEFAULT_PREFS["enable_lab_update_progress"] is False
+        assert "enable_lab_lists" in DEFAULT_PREFS
+        assert DEFAULT_PREFS["enable_lab_lists"] is False
+
 
 # =============================================================================
 # Test get_plugin_prefs

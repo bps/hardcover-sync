@@ -10,7 +10,7 @@ from functools import partial
 from calibre.gui2.actions import InterfaceAction
 from qt.core import QMenu, QToolButton
 
-from .config import READING_STATUSES, get_plugin_prefs
+from .config import MENU_STATUSES, READING_STATUSES, get_plugin_prefs
 
 
 class HardcoverSyncAction(InterfaceAction):
@@ -90,15 +90,15 @@ class HardcoverSyncAction(InterfaceAction):
         # Set Status submenu
         if prefs.get("display_status_menu", True):
             status_menu = self.menu.addMenu("Set Status")
-            for status_id, status_name in READING_STATUSES.items():
+            for status_id, status_name in MENU_STATUSES.items():
                 action = status_menu.addAction(status_name)
                 action.triggered.connect(partial(self.set_reading_status, status_id))
             status_menu.addSeparator()
             remove_action = status_menu.addAction("Remove from Hardcover")
             remove_action.triggered.connect(self.remove_from_hardcover)
 
-        # Update Progress
-        if prefs.get("display_progress_menu", True):
+        # Update Progress (Lab feature)
+        if prefs.get("enable_lab_update_progress", False):
             self.menu.addAction("Update Reading Progress...").triggered.connect(
                 self.update_progress
             )
@@ -114,8 +114,8 @@ class HardcoverSyncAction(InterfaceAction):
 
         self.menu.addSeparator()
 
-        # Lists submenu
-        if prefs.get("display_lists_menu", True):
+        # Lists submenu (Lab feature)
+        if prefs.get("enable_lab_lists", False):
             lists_menu = self.menu.addMenu("Lists")
             lists_menu.addAction("Add to List...").triggered.connect(self.add_to_list)
             lists_menu.addAction("Remove from List...").triggered.connect(self.remove_from_list)
@@ -176,7 +176,7 @@ class HardcoverSyncAction(InterfaceAction):
 
     def _update_calibre_status(self, db, book_id: int, status_id: int):
         """Update the Calibre status column if configured."""
-        from .config import READING_STATUSES, get_plugin_prefs
+        from .config import get_plugin_prefs
 
         prefs = get_plugin_prefs()
         status_column = prefs.get("status_column")
@@ -197,7 +197,6 @@ class HardcoverSyncAction(InterfaceAction):
         """Set the reading status for selected books on Hardcover."""
         from calibre.gui2 import error_dialog, info_dialog
 
-        from .config import READING_STATUSES
         from .matcher import get_hardcover_id
 
         book_ids = self.get_selected_book_ids()

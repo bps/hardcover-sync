@@ -6,7 +6,6 @@ the Hardcover.app GraphQL API.
 """
 
 import sys
-from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -24,6 +23,16 @@ from gql.transport.exceptions import TransportQueryError  # noqa: E402
 from gql.transport.requests import RequestsHTTPTransport  # noqa: E402
 
 from . import queries  # noqa: E402
+from .models import (  # noqa: E402
+    Author,
+    Book,
+    Edition,
+    List,
+    User,
+    UserBook,
+    UserBookRead,
+    clean_isbn,
+)
 
 # API Configuration
 API_URL = "https://api.hardcover.app/v1/graphql"
@@ -46,147 +55,6 @@ class RateLimitError(HardcoverAPIError):
     """Raised when rate limit is exceeded."""
 
     pass
-
-
-@dataclass
-class User:
-    """Represents a Hardcover user."""
-
-    id: int
-    username: str
-    name: str | None = None
-    books_count: int = 0
-    image: str | None = None
-
-
-@dataclass
-class Author:
-    """Represents a book author."""
-
-    id: int
-    name: str
-
-
-@dataclass
-class Edition:
-    """Represents a book edition."""
-
-    id: int
-    isbn_13: str | None = None
-    isbn_10: str | None = None
-    title: str | None = None
-    pages: int | None = None
-
-
-@dataclass
-class Book:
-    """Represents a Hardcover book."""
-
-    id: int
-    title: str
-    slug: str | None = None
-    release_date: str | None = None
-    authors: list[Author] | None = None
-    editions: list[Edition] | None = None
-
-
-@dataclass
-class UserBookRead:
-    """Represents a single reading session for a book.
-
-    Hardcover supports multiple reads of the same book (re-reads).
-    Each read has its own start/finish dates and progress.
-    """
-
-    id: int
-    started_at: str | None = None
-    finished_at: str | None = None
-    progress_pages: int | None = None
-    edition_id: int | None = None
-
-
-@dataclass
-class UserBook:
-    """Represents a book in a user's library."""
-
-    id: int
-    book_id: int
-    edition_id: int | None = None
-    status_id: int | None = None
-    rating: float | None = None
-    review: str | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
-    book: Book | None = None
-    edition: Edition | None = None
-    reads: list[UserBookRead] | None = None
-
-    # Deprecated fields - use reads instead
-    # Kept for backward compatibility but always None from API
-    progress: float | None = None
-    progress_pages: int | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
-
-    @property
-    def latest_read(self) -> UserBookRead | None:
-        """Get the most recent reading session (first in list, sorted by started_at desc)."""
-        if self.reads:
-            return self.reads[0]
-        return None
-
-    @property
-    def first_read(self) -> UserBookRead | None:
-        """Get the first/oldest reading session."""
-        if self.reads:
-            return self.reads[-1]
-        return None
-
-    @property
-    def latest_started_at(self) -> str | None:
-        """Get the start date from the most recent read."""
-        read = self.latest_read
-        return read.started_at if read else None
-
-    @property
-    def latest_finished_at(self) -> str | None:
-        """Get the finish date from the most recent read."""
-        read = self.latest_read
-        return read.finished_at if read else None
-
-    @property
-    def first_started_at(self) -> str | None:
-        """Get the start date from the first read (when they first started the book)."""
-        read = self.first_read
-        return read.started_at if read else None
-
-    @property
-    def first_finished_at(self) -> str | None:
-        """Get the finish date from the first read (when they first finished)."""
-        read = self.first_read
-        return read.finished_at if read else None
-
-    @property
-    def current_progress_pages(self) -> int | None:
-        """Get progress pages from the most recent read."""
-        read = self.latest_read
-        return read.progress_pages if read else None
-
-    @property
-    def read_count(self) -> int:
-        """Get the number of times this book has been read/started."""
-        return len(self.reads) if self.reads else 0
-
-
-@dataclass
-class List:
-    """Represents a Hardcover list."""
-
-    id: int
-    name: str
-    slug: str | None = None
-    description: str | None = None
-    books_count: int = 0
 
 
 class HardcoverAPI:
@@ -332,12 +200,7 @@ class HardcoverAPI:
                 raise AuthenticationError("Could not fetch user information")
             me = me[0]
 
-        self._user = User(
-            id=me["id"],
-            username=me["username"],
-            name=me.get("name"),
-            books_count=me.get("books_count", 0),
-        )
+        self._user = User.from_dict(me)
         return self._user
 
     def validate_token(self) -> tuple[bool, User | None]:
@@ -367,8 +230,7 @@ class HardcoverAPI:
         Returns:
             Book object if found, None otherwise.
         """
-        # Clean ISBN
-        isbn = isbn.replace("-", "").replace(" ", "")
+        isbn = clean_isbn(isbn)
 
         # Try ISBN-13 first
         if len(isbn) == 13:
@@ -383,29 +245,14 @@ class HardcoverAPI:
         if not editions:
             return None
 
-        edition = editions[0]
-        book_data = edition.get("book", {})
+        edition_data = editions[0]
+        book_data = edition_data.get("book", {})
 
-        authors = []
-        for contrib in book_data.get("contributions", []):
-            author_data = contrib.get("author", {})
-            if author_data:
-                authors.append(Author(id=author_data["id"], name=author_data["name"]))
+        # Create edition from the response
+        edition = Edition.from_dict(edition_data)
 
-        return Book(
-            id=book_data["id"],
-            title=book_data["title"],
-            slug=book_data.get("slug"),
-            authors=authors,
-            editions=[
-                Edition(
-                    id=edition["id"],
-                    isbn_13=edition.get("isbn_13"),
-                    isbn_10=edition.get("isbn_10"),
-                    title=edition.get("title"),
-                )
-            ],
-        )
+        # Create book with the edition we found
+        return Book.from_dict(book_data, editions=[edition])
 
     def search_books(self, query: str) -> list[Book]:
         """
@@ -498,53 +345,11 @@ class HardcoverAPI:
         if not books:
             return None
 
-        book_data = books[0]
-
-        authors = []
-        for contrib in book_data.get("contributions", []):
-            author_data = contrib.get("author", {})
-            if author_data:
-                authors.append(Author(id=author_data["id"], name=author_data["name"]))
-
-        editions = []
-        for ed in book_data.get("editions", []):
-            editions.append(
-                Edition(
-                    id=ed["id"],
-                    isbn_13=ed.get("isbn_13"),
-                    isbn_10=ed.get("isbn_10"),
-                    title=ed.get("title"),
-                    pages=ed.get("pages"),
-                )
-            )
-
-        return Book(
-            id=book_data["id"],
-            title=book_data["title"],
-            slug=book_data.get("slug"),
-            release_date=book_data.get("release_date"),
-            authors=authors,
-            editions=editions,
-        )
+        return Book.from_dict(books[0])
 
     # =========================================================================
     # User Library Methods
     # =========================================================================
-
-    def _parse_reads(self, reads_data: list[dict] | None) -> list[UserBookRead]:
-        """Parse user_book_reads data into UserBookRead objects."""
-        if not reads_data:
-            return []
-        return [
-            UserBookRead(
-                id=r["id"],
-                started_at=r.get("started_at"),
-                finished_at=r.get("finished_at"),
-                progress_pages=r.get("progress_pages"),
-                edition_id=r.get("edition_id"),
-            )
-            for r in reads_data
-        ]
 
     def get_user_books(
         self, user_id: int | None = None, limit: int = 100, offset: int = 0
@@ -570,54 +375,7 @@ class HardcoverAPI:
             {"user_id": user_id, "limit": limit, "offset": offset},
         )
 
-        user_books = []
-        for ub in result.get("user_books", []):
-            book_data = ub.get("book", {})
-            edition_data = ub.get("edition", {})
-
-            book = None
-            if book_data:
-                authors = []
-                for contrib in book_data.get("contributions", []):
-                    author_data = contrib.get("author", {})
-                    if author_data:
-                        authors.append(Author(id=author_data["id"], name=author_data["name"]))
-
-                book = Book(
-                    id=book_data["id"],
-                    title=book_data["title"],
-                    slug=book_data.get("slug"),
-                    release_date=book_data.get("release_date"),
-                    authors=authors,
-                )
-
-            edition = None
-            if edition_data:
-                edition = Edition(
-                    id=edition_data["id"],
-                    isbn_13=edition_data.get("isbn_13"),
-                    isbn_10=edition_data.get("isbn_10"),
-                    title=edition_data.get("title"),
-                    pages=edition_data.get("pages"),
-                )
-
-            user_books.append(
-                UserBook(
-                    id=ub["id"],
-                    book_id=ub["book_id"],
-                    edition_id=ub.get("edition_id"),
-                    status_id=ub.get("status_id"),
-                    rating=ub.get("rating"),
-                    review=ub.get("review_raw"),
-                    created_at=ub.get("created_at"),
-                    updated_at=ub.get("updated_at"),
-                    book=book,
-                    edition=edition,
-                    reads=self._parse_reads(ub.get("user_book_reads")),
-                )
-            )
-
-        return user_books
+        return [UserBook.from_dict(ub) for ub in result.get("user_books", [])]
 
     def get_user_book(self, book_id: int, user_id: int | None = None) -> UserBook | None:
         """
@@ -644,18 +402,7 @@ class HardcoverAPI:
         if not user_books:
             return None
 
-        ub = user_books[0]
-        return UserBook(
-            id=ub["id"],
-            book_id=ub["book_id"],
-            edition_id=ub.get("edition_id"),
-            status_id=ub.get("status_id"),
-            rating=ub.get("rating"),
-            review=ub.get("review_raw"),
-            created_at=ub.get("created_at"),
-            updated_at=ub.get("updated_at"),
-            reads=self._parse_reads(ub.get("user_book_reads")),
-        )
+        return UserBook.from_dict(user_books[0])
 
     def add_book_to_library(
         self,
@@ -663,7 +410,6 @@ class HardcoverAPI:
         status_id: int,
         edition_id: int | None = None,
         rating: float | None = None,
-        progress_pages: int | None = None,
         started_at: date | str | None = None,
         finished_at: date | str | None = None,
         review: str | None = None,
@@ -676,51 +422,55 @@ class HardcoverAPI:
             status_id: The reading status (1-6).
             edition_id: Optional edition ID.
             rating: Optional rating (0-5).
-            progress_pages: Optional page progress.
-            started_at: Optional start date.
-            finished_at: Optional finish date.
+            started_at: Optional start date (sets first_started_reading_date).
+            finished_at: Optional finish date (sets last_read_date).
             review: Optional review text.
 
         Returns:
             The created UserBook.
+
+        Note:
+            For tracking reading progress (pages), use insert_user_book_read() after
+            creating the user_book.
         """
-        variables: dict[str, Any] = {
+        # Build the UserBookCreateInput object
+        user_book_input: dict[str, Any] = {
             "book_id": book_id,
             "status_id": status_id,
         }
 
         if edition_id is not None:
-            variables["edition_id"] = edition_id
+            user_book_input["edition_id"] = edition_id
         if rating is not None:
-            variables["rating"] = rating
-        if progress_pages is not None:
-            variables["progress_pages"] = progress_pages
+            user_book_input["rating"] = rating
         if started_at is not None:
-            variables["started_at"] = (
+            user_book_input["first_started_reading_date"] = (
                 str(started_at) if isinstance(started_at, date) else started_at
             )
         if finished_at is not None:
-            variables["finished_at"] = (
+            user_book_input["last_read_date"] = (
                 str(finished_at) if isinstance(finished_at, date) else finished_at
             )
-        if review is not None:
-            variables["review"] = review
+        # Note: review is stored as review_slate (jsonb) - simple text not directly supported
 
         result = self._execute_mutation(
             queries.INSERT_USER_BOOK_MUTATION,
-            variables,
+            {"object": user_book_input},
             operation_name="add_book_to_library",
             dry_run_result={
                 "insert_user_book": {
                     "id": -1,
-                    "book_id": book_id,
-                    "status_id": status_id,
-                    "rating": rating,
-                    "updated_at": None,
+                    "user_book": {
+                        "id": -1,
+                        "book_id": book_id,
+                        "status_id": status_id,
+                        "rating": rating,
+                        "updated_at": None,
+                    },
                 }
             },
         )
-        ub = result.get("insert_user_book", {})
+        ub = result.get("insert_user_book", {}).get("user_book", {})
 
         return UserBook(
             id=ub["id"],
@@ -735,7 +485,6 @@ class HardcoverAPI:
         user_book_id: int,
         status_id: int | None = None,
         rating: float | None = None,
-        progress_pages: int | None = None,
         started_at: date | str | None = None,
         finished_at: date | str | None = None,
         review: str | None = None,
@@ -747,57 +496,56 @@ class HardcoverAPI:
             user_book_id: The user_book ID to update.
             status_id: Optional new status (1-6).
             rating: Optional new rating (0-5).
-            progress_pages: Optional new page progress.
-            started_at: Optional new start date.
-            finished_at: Optional new finish date.
-            review: Optional new review text.
+            started_at: Optional new start date (sets first_started_reading_date).
+            finished_at: Optional new finish date (sets last_read_date).
+            review: Optional new review text (not currently supported by API).
 
         Returns:
             The updated UserBook.
+
+        Note:
+            For tracking reading progress (pages), use insert_user_book_read() or
+            update_user_book_read() instead.
         """
-        variables: dict[str, Any] = {"id": user_book_id}
+        # Build the UserBookUpdateInput object
+        user_book_input: dict[str, Any] = {}
 
         if status_id is not None:
-            variables["status_id"] = status_id
+            user_book_input["status_id"] = status_id
         if rating is not None:
-            variables["rating"] = rating
-        if progress_pages is not None:
-            variables["progress_pages"] = progress_pages
+            user_book_input["rating"] = rating
         if started_at is not None:
-            variables["started_at"] = (
+            user_book_input["first_started_reading_date"] = (
                 str(started_at) if isinstance(started_at, date) else started_at
             )
         if finished_at is not None:
-            variables["finished_at"] = (
+            user_book_input["last_read_date"] = (
                 str(finished_at) if isinstance(finished_at, date) else finished_at
             )
-        if review is not None:
-            variables["review"] = review
+        # Note: review is stored as review_slate (jsonb) - simple text not directly supported
 
         result = self._execute_mutation(
             queries.UPDATE_USER_BOOK_MUTATION,
-            variables,
+            {"id": user_book_id, "object": user_book_input},
             operation_name="update_user_book",
             dry_run_result={
                 "update_user_book": {
-                    "returning": [
-                        {
-                            "id": user_book_id,
-                            "book_id": -1,
-                            "status_id": status_id,
-                            "rating": rating,
-                            "updated_at": None,
-                        }
-                    ]
+                    "id": user_book_id,
+                    "user_book": {
+                        "id": user_book_id,
+                        "book_id": -1,
+                        "status_id": status_id,
+                        "rating": rating,
+                        "updated_at": None,
+                    },
                 }
             },
         )
-        returning = result.get("update_user_book", {}).get("returning", [])
+        ub = result.get("update_user_book", {}).get("user_book", {})
 
-        if not returning:
+        if not ub:
             raise HardcoverAPIError("Update failed - no data returned")
 
-        ub = returning[0]
         return UserBook(
             id=ub["id"],
             book_id=ub["book_id"],
@@ -820,10 +568,162 @@ class HardcoverAPI:
             queries.DELETE_USER_BOOK_MUTATION,
             {"id": user_book_id},
             operation_name="remove_book_from_library",
-            dry_run_result={"delete_user_book": {"affected_rows": 1}},
+            dry_run_result={"delete_user_book": {"id": user_book_id}},
         )
-        affected = result.get("delete_user_book", {}).get("affected_rows", 0)
-        return affected > 0
+        # The new API returns {id, book_id, user_id} on success
+        deleted_id = result.get("delete_user_book", {}).get("id")
+        return deleted_id is not None
+
+    # =========================================================================
+    # User Book Read Methods (Progress Tracking)
+    # =========================================================================
+
+    def insert_user_book_read(
+        self,
+        user_book_id: int,
+        started_at: date | str | None = None,
+        finished_at: date | str | None = None,
+        progress: float | None = None,
+        progress_pages: int | None = None,
+        edition_id: int | None = None,
+    ) -> UserBookRead:
+        """
+        Create a new reading session for a book.
+
+        Args:
+            user_book_id: The user_book ID to add a read to.
+            started_at: When reading started.
+            finished_at: When reading finished.
+            progress: Progress as decimal (0.0-1.0).
+            progress_pages: Progress in pages.
+            edition_id: Optional specific edition being read.
+
+        Returns:
+            The created UserBookRead.
+        """
+        read_input: dict[str, Any] = {}
+
+        if started_at is not None:
+            read_input["started_at"] = (
+                str(started_at) if isinstance(started_at, date) else started_at
+            )
+        if finished_at is not None:
+            read_input["finished_at"] = (
+                str(finished_at) if isinstance(finished_at, date) else finished_at
+            )
+        if progress is not None:
+            read_input["progress"] = progress
+        if progress_pages is not None:
+            read_input["progress_pages"] = progress_pages
+        if edition_id is not None:
+            read_input["edition_id"] = edition_id
+
+        result = self._execute_mutation(
+            queries.INSERT_USER_BOOK_READ_MUTATION,
+            {"user_book_id": user_book_id, "user_book_read": read_input},
+            operation_name="insert_user_book_read",
+            dry_run_result={
+                "insert_user_book_read": {
+                    "id": -1,
+                    "user_book_read": {
+                        "id": -1,
+                        "started_at": read_input.get("started_at"),
+                        "finished_at": read_input.get("finished_at"),
+                        "paused_at": None,
+                        "progress": progress,
+                        "progress_pages": progress_pages,
+                        "edition_id": edition_id,
+                    },
+                }
+            },
+        )
+        read_data = result.get("insert_user_book_read", {}).get("user_book_read", {})
+        return UserBookRead.from_dict(read_data)
+
+    def update_user_book_read(
+        self,
+        read_id: int,
+        started_at: date | str | None = None,
+        finished_at: date | str | None = None,
+        progress: float | None = None,
+        progress_pages: int | None = None,
+        edition_id: int | None = None,
+    ) -> UserBookRead:
+        """
+        Update an existing reading session.
+
+        Args:
+            read_id: The user_book_read ID to update.
+            started_at: When reading started.
+            finished_at: When reading finished.
+            progress: Progress as decimal (0.0-1.0).
+            progress_pages: Progress in pages.
+            edition_id: Optional specific edition being read.
+
+        Returns:
+            The updated UserBookRead.
+        """
+        read_input: dict[str, Any] = {}
+
+        if started_at is not None:
+            read_input["started_at"] = (
+                str(started_at) if isinstance(started_at, date) else started_at
+            )
+        if finished_at is not None:
+            read_input["finished_at"] = (
+                str(finished_at) if isinstance(finished_at, date) else finished_at
+            )
+        if progress is not None:
+            read_input["progress"] = progress
+        if progress_pages is not None:
+            read_input["progress_pages"] = progress_pages
+        if edition_id is not None:
+            read_input["edition_id"] = edition_id
+
+        result = self._execute_mutation(
+            queries.UPDATE_USER_BOOK_READ_MUTATION,
+            {"id": read_id, "object": read_input},
+            operation_name="update_user_book_read",
+            dry_run_result={
+                "update_user_book_read": {
+                    "id": read_id,
+                    "user_book_read": {
+                        "id": read_id,
+                        "started_at": read_input.get("started_at"),
+                        "finished_at": read_input.get("finished_at"),
+                        "paused_at": None,
+                        "progress": progress,
+                        "progress_pages": progress_pages,
+                        "edition_id": edition_id,
+                    },
+                }
+            },
+        )
+        read_data = result.get("update_user_book_read", {}).get("user_book_read", {})
+
+        if not read_data:
+            raise HardcoverAPIError("Update failed - no data returned")
+
+        return UserBookRead.from_dict(read_data)
+
+    def delete_user_book_read(self, read_id: int) -> bool:
+        """
+        Delete a reading session.
+
+        Args:
+            read_id: The user_book_read ID to delete.
+
+        Returns:
+            True if successful.
+        """
+        result = self._execute_mutation(
+            queries.DELETE_USER_BOOK_READ_MUTATION,
+            {"id": read_id},
+            operation_name="delete_user_book_read",
+            dry_run_result={"delete_user_book_read": {"id": read_id}},
+        )
+        deleted_id = result.get("delete_user_book_read", {}).get("id")
+        return deleted_id is not None
 
     # =========================================================================
     # List Methods
@@ -846,19 +746,7 @@ class HardcoverAPI:
 
         result = self._execute(queries.USER_LISTS_QUERY, {"user_id": user_id})
 
-        lists = []
-        for lst in result.get("lists", []):
-            lists.append(
-                List(
-                    id=lst["id"],
-                    name=lst["name"],
-                    slug=lst.get("slug"),
-                    description=lst.get("description"),
-                    books_count=lst.get("books_count", 0),
-                )
-            )
-
-        return lists
+        return [List.from_dict(lst) for lst in result.get("lists", [])]
 
     def get_book_lists(self, book_id: int, user_id: int | None = None) -> list[List]:
         """
@@ -885,13 +773,7 @@ class HardcoverAPI:
         for lb in result.get("list_books", []):
             lst = lb.get("list", {})
             if lst:
-                lists.append(
-                    List(
-                        id=lst["id"],
-                        name=lst["name"],
-                        slug=lst.get("slug"),
-                    )
-                )
+                lists.append(List.from_dict(lst))
 
         return lists
 

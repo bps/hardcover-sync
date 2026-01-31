@@ -23,12 +23,15 @@ from qt.core import (
     Qt,
 )
 
-from ..api import HardcoverAPI, UserBook
+from ..api import HardcoverAPI
 from ..config import READING_STATUSES, get_plugin_prefs
+from ..models import UserBook
 from ..sync import (
     NewBookAction,
     SyncChange,
-    format_rating_as_stars,
+    convert_rating_to_calibre,
+    find_new_books,
+    find_sync_from_changes,
 )
 
 
@@ -388,211 +391,26 @@ class SyncFromHardcoverDialog(QDialog):
 
     def _find_changes(self, hc_to_calibre: dict[int, int] | None = None) -> list[SyncChange]:
         """Find all changes between Hardcover and Calibre."""
-        changes = []
-
-        # Get column mappings
-        status_col = self.prefs.get("status_column", "")
-        rating_col = self.prefs.get("rating_column", "")
-        progress_col = self.prefs.get("progress_column", "")
-        date_started_col = self.prefs.get("date_started_column", "")
-        date_read_col = self.prefs.get("date_read_column", "")
-        review_col = self.prefs.get("review_column", "")
-
-        # Get sync options
-        sync_rating = self.prefs.get("sync_rating", True)
-        sync_progress = self.prefs.get("sync_progress", True)
-        sync_dates = self.prefs.get("sync_dates", True)
-        sync_review = self.prefs.get("sync_review", True)
-
-        # Get status mappings (Hardcover ID -> Calibre value)
-        status_mappings = self.prefs.get("status_mappings", {})
-
-        # Build a map of Hardcover book ID -> Calibre book ID
         if hc_to_calibre is None:
             hc_to_calibre = self._build_hardcover_to_calibre_map()
 
-        for hc_book in self.hardcover_books:
-            calibre_id = hc_to_calibre.get(hc_book.book_id)
-            if not calibre_id:
-                continue  # Not linked to Calibre
-
-            calibre_title = self.db.field_for("title", calibre_id) or "Unknown"
-
-            # Check status
-            if status_col and hc_book.status_id:
-                hc_status_value = status_mappings.get(
-                    str(hc_book.status_id), READING_STATUSES.get(hc_book.status_id, "")
-                )
-                if hc_status_value:
-                    current = self._get_calibre_value(calibre_id, status_col)
-                    if current != hc_status_value:
-                        changes.append(
-                            SyncChange(
-                                calibre_id=calibre_id,
-                                calibre_title=calibre_title,
-                                hardcover_book_id=hc_book.book_id,
-                                field="status",
-                                old_value=current or "(empty)",
-                                new_value=hc_status_value,
-                            )
-                        )
-
-            # Check rating
-            if sync_rating and rating_col and hc_book.rating is not None:
-                current = self._get_calibre_value(calibre_id, rating_col)
-                # Convert Hardcover rating (0-5) to Calibre scale
-                if rating_col == "rating":
-                    # Built-in rating is 0-10 (displayed as stars)
-                    new_rating = str(int(hc_book.rating * 2))
-                    # Convert current Calibre value to 0-5 for star display
-                    current_for_stars = current / 2 if current else None
-                elif rating_col.startswith("#"):
-                    # Custom column - check if it's a rating type
-                    col_info = self._get_custom_column_metadata(rating_col)
-                    if col_info and col_info.get("datatype") == "rating":
-                        # Custom rating columns also use 0-10 internally
-                        new_rating = str(int(hc_book.rating * 2))
-                        current_for_stars = current / 2 if current else None
-                    else:
-                        # Other column types (int, float) - store as 0-5
-                        new_rating = str(hc_book.rating)
-                        current_for_stars = float(current) if current else None
-                else:
-                    new_rating = str(hc_book.rating)
-                    current_for_stars = float(current) if current else None
-
-                if str(current) != new_rating:
-                    changes.append(
-                        SyncChange(
-                            calibre_id=calibre_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book.book_id,
-                            field="rating",
-                            old_value=format_rating_as_stars(current_for_stars),
-                            new_value=format_rating_as_stars(hc_book.rating),
-                            raw_value=new_rating,
-                        )
-                    )
-
-            # Check progress (from latest read)
-            current_progress = hc_book.current_progress_pages
-            if sync_progress and progress_col and current_progress is not None:
-                current = self._get_calibre_value(calibre_id, progress_col)
-                new_progress = str(current_progress)
-                if str(current) != new_progress:
-                    changes.append(
-                        SyncChange(
-                            calibre_id=calibre_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book.book_id,
-                            field="progress",
-                            old_value=str(current) if current else "(empty)",
-                            new_value=new_progress,
-                        )
-                    )
-
-            # Check date started (from latest read)
-            latest_started = hc_book.latest_started_at
-            if sync_dates and date_started_col and latest_started:
-                current = self._get_calibre_value(calibre_id, date_started_col)
-                current_str = str(current)[:10] if current else ""
-                new_date = latest_started[:10]  # YYYY-MM-DD
-                if current_str != new_date:
-                    changes.append(
-                        SyncChange(
-                            calibre_id=calibre_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book.book_id,
-                            field="date_started",
-                            old_value=current_str or "(empty)",
-                            new_value=new_date,
-                        )
-                    )
-
-            # Check date read (from latest read)
-            latest_finished = hc_book.latest_finished_at
-            if sync_dates and date_read_col and latest_finished:
-                current = self._get_calibre_value(calibre_id, date_read_col)
-                current_str = str(current)[:10] if current else ""
-                new_date = latest_finished[:10]
-                if current_str != new_date:
-                    changes.append(
-                        SyncChange(
-                            calibre_id=calibre_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book.book_id,
-                            field="date_read",
-                            old_value=current_str or "(empty)",
-                            new_value=new_date,
-                        )
-                    )
-
-            # Check review
-            if sync_review and review_col and hc_book.review:
-                current = self._get_calibre_value(calibre_id, review_col)
-                if current != hc_book.review:
-                    changes.append(
-                        SyncChange(
-                            calibre_id=calibre_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book.book_id,
-                            field="review",
-                            old_value=(current[:50] + "...")
-                            if current and len(current) > 50
-                            else (current or "(empty)"),
-                            new_value=(hc_book.review[:50] + "...")
-                            if len(hc_book.review) > 50
-                            else hc_book.review,
-                        )
-                    )
-
-        return changes
+        return find_sync_from_changes(
+            hardcover_books=self.hardcover_books,
+            hc_to_calibre=hc_to_calibre,
+            get_calibre_value=self._get_calibre_value,
+            get_calibre_title=lambda book_id: self.db.field_for("title", book_id) or "Unknown",
+            prefs=self.prefs,
+            get_column_metadata=self._get_custom_column_metadata,
+        )
 
     def _find_new_books(self, hc_to_calibre: dict[int, int]) -> list[NewBookAction]:
         """Find Hardcover books that aren't in Calibre yet."""
-        new_books = []
-
-        # Get reading status filter (empty list means all statuses)
         sync_statuses = self.prefs.get("sync_statuses", [])
-
-        for hc_book in self.hardcover_books:
-            # Skip books that are already linked to Calibre
-            if hc_book.book_id in hc_to_calibre:
-                continue
-
-            # Skip if no book metadata
-            if not hc_book.book:
-                continue
-
-            # Skip if status is not in the sync filter (when filter is set)
-            if sync_statuses and hc_book.status_id not in sync_statuses:
-                continue
-
-            # Extract metadata
-            title = hc_book.book.title
-            authors = []
-            if hc_book.book.authors:
-                authors = [a.name for a in hc_book.book.authors]
-
-            # Get ISBN from edition if available
-            isbn = None
-            if hc_book.edition:
-                isbn = hc_book.edition.isbn_13 or hc_book.edition.isbn_10
-
-            # Get release date
-            release_date = hc_book.book.release_date
-
-            new_books.append(
-                NewBookAction(
-                    hardcover_book_id=hc_book.book_id,
-                    title=title,
-                    authors=authors,
-                    user_book=hc_book,
-                    isbn=isbn,
-                    release_date=release_date,
-                )
-            )
-
+        new_books = find_new_books(
+            hardcover_books=self.hardcover_books,
+            hc_to_calibre=hc_to_calibre,
+            sync_statuses=sync_statuses if sync_statuses else None,
+        )
         # Sort by title
         new_books.sort(key=lambda x: x.title.lower())
         return new_books
@@ -1148,17 +966,13 @@ class SyncFromHardcoverDialog(QDialog):
 
         # Apply rating
         if rating_col and user_book.rating is not None:
-            if rating_col == "rating":
-                # Built-in rating is 0-10
-                rating_value = int(user_book.rating * 2)
-            elif rating_col.startswith("#"):
-                col_info = self._get_custom_column_metadata(rating_col)
-                if col_info and col_info.get("datatype") == "rating":
-                    rating_value = int(user_book.rating * 2)
-                else:
-                    rating_value = user_book.rating
+            col_info = self._get_custom_column_metadata(rating_col)
+            rating_value_str, _ = convert_rating_to_calibre(user_book.rating, rating_col, col_info)
+            # Convert string back to appropriate type for Calibre
+            if rating_col == "rating" or (col_info and col_info.get("datatype") == "rating"):
+                rating_value = int(rating_value_str)
             else:
-                rating_value = user_book.rating
+                rating_value = float(rating_value_str)
             self._set_column_value(book_id, rating_col, rating_value)
 
         # Apply progress (from latest read)
@@ -1221,6 +1035,7 @@ class SyncFromHardcoverDialog(QDialog):
             "status": self.prefs.get("status_column", ""),
             "rating": self.prefs.get("rating_column", ""),
             "progress": self.prefs.get("progress_column", ""),
+            "progress_percent": self.prefs.get("progress_percent_column", ""),
             "date_started": self.prefs.get("date_started_column", ""),
             "date_read": self.prefs.get("date_read_column", ""),
             "review": self.prefs.get("review_column", ""),

@@ -10,7 +10,7 @@ This module provides:
 # Calibre imports - only available in Calibre's runtime environment
 from calibre.utils.config import JSONConfig
 
-# Hardcover reading status mapping
+# Hardcover reading status mapping (all API statuses)
 READING_STATUSES = {
     1: "Want to Read",
     2: "Currently Reading",
@@ -18,6 +18,15 @@ READING_STATUSES = {
     4: "Paused",
     5: "Did Not Finish",
     6: "Ignored",
+}
+
+# Statuses exposed in the Hardcover UI (for menu display)
+# Order matches the Hardcover UI: Read, Currently Reading, Want to Read, Did not finish
+MENU_STATUSES = {
+    3: "Read",
+    2: "Currently Reading",
+    1: "Want to Read",
+    5: "Did Not Finish",
 }
 
 # Reverse mapping for convenience
@@ -32,7 +41,8 @@ DEFAULT_PREFS = {
     # Column mappings (None or empty string means not mapped)
     "status_column": "",
     "rating_column": "",
-    "progress_column": "",
+    "progress_column": "",  # Integer column for page number
+    "progress_percent_column": "",  # Float column for percentage (0-100)
     "date_started_column": "",
     "date_read_column": "",
     "review_column": "",
@@ -51,6 +61,9 @@ DEFAULT_PREFS = {
     "sync_dates": True,
     "sync_review": True,
     "sync_lists": True,
+    # Lab / Experimental features
+    "enable_lab_update_progress": False,
+    "enable_lab_lists": False,
 }
 
 # Plugin configuration storage
@@ -190,11 +203,17 @@ class ConfigWidget:
         # Tab 1: Account
         self._create_account_tab()
 
-        # Tab 2: Column Mappings
+        # Tab 2: Sync Options (created before Columns so checkboxes exist)
+        self._create_sync_tab()
+
+        # Tab 3: Column Mappings (visibility depends on sync options)
         self._create_columns_tab()
 
-        # Tab 3: Sync Options
-        self._create_sync_tab()
+        # Tab 4: Lab (Experimental)
+        self._create_lab_tab()
+
+        # Initialize column visibility based on current sync settings
+        self._update_column_visibility()
 
     def _create_account_tab(self):
         """Create the Account settings tab."""
@@ -262,62 +281,77 @@ class ConfigWidget:
         # Instructions
         instructions = QLabel(
             "Map Calibre columns to Hardcover fields. "
-            "Create custom columns in Calibre first, then select them here."
+            "Create custom columns in Calibre first, then select them here. "
+            "Enable features in the Sync Options tab to see their column mappings."
         )
         instructions.setWordWrap(True)
         layout.addWidget(instructions)
 
         # Column mappings group
         columns_group = QGroupBox("Column Mappings")
-        columns_layout = QFormLayout(columns_group)
+        self.columns_layout = QFormLayout(columns_group)
 
         # Get available columns from Calibre
         enum_columns = self._get_custom_columns(["enumeration", "text"])
         rating_columns = self._get_rating_columns()
-        int_columns = self._get_custom_columns(["int", "float"])
+        int_columns = self._get_custom_columns(["int"])
+        float_columns = self._get_custom_columns(["float"])
         date_columns = self._get_custom_columns(["datetime"])
         text_columns = self._get_custom_columns(["text", "comments"])
         tags_columns = self._get_tags_columns()
 
-        # Status column (enumeration preferred)
+        # Status column (enumeration preferred) - always visible
         self.status_combo = CustomColumnComboBox(tab, enum_columns, prefs.get("status_column", ""))
         self.status_combo.setMinimumWidth(200)
-        columns_layout.addRow("Reading Status:", self.status_combo.widget())
+        self.columns_layout.addRow("Reading Status:", self.status_combo.widget())
 
-        # Rating column
+        # Rating column - controlled by sync_rating
         self.rating_combo = CustomColumnComboBox(
             tab, rating_columns, prefs.get("rating_column", "")
         )
         self.rating_combo.setMinimumWidth(200)
-        columns_layout.addRow("Rating:", self.rating_combo.widget())
+        self.columns_layout.addRow("Rating:", self.rating_combo.widget())
+        self.rating_row = self.columns_layout.rowCount() - 1
 
-        # Progress column (integer)
+        # Progress column (integer for pages) - controlled by sync_progress
         self.progress_combo = CustomColumnComboBox(
             tab, int_columns, prefs.get("progress_column", "")
         )
         self.progress_combo.setMinimumWidth(200)
-        columns_layout.addRow("Progress (pages):", self.progress_combo.widget())
+        self.columns_layout.addRow("Progress (pages):", self.progress_combo.widget())
+        self.progress_row = self.columns_layout.rowCount() - 1
 
-        # Date started column
+        # Progress percent column (float for percentage) - controlled by sync_progress
+        self.progress_percent_combo = CustomColumnComboBox(
+            tab, float_columns, prefs.get("progress_percent_column", "")
+        )
+        self.progress_percent_combo.setMinimumWidth(200)
+        self.columns_layout.addRow("Progress (%):", self.progress_percent_combo.widget())
+        self.progress_percent_row = self.columns_layout.rowCount() - 1
+
+        # Date started column - controlled by sync_dates
         self.date_started_combo = CustomColumnComboBox(
             tab, date_columns, prefs.get("date_started_column", "")
         )
         self.date_started_combo.setMinimumWidth(200)
-        columns_layout.addRow("Date Started:", self.date_started_combo.widget())
+        self.columns_layout.addRow("Date Started:", self.date_started_combo.widget())
+        self.date_started_row = self.columns_layout.rowCount() - 1
 
-        # Date read column
+        # Date read column - controlled by sync_dates
         self.date_read_combo = CustomColumnComboBox(
             tab, date_columns, prefs.get("date_read_column", "")
         )
         self.date_read_combo.setMinimumWidth(200)
-        columns_layout.addRow("Date Read:", self.date_read_combo.widget())
+        self.columns_layout.addRow("Date Read:", self.date_read_combo.widget())
+        self.date_read_row = self.columns_layout.rowCount() - 1
 
-        # Review column (long text)
+        # Review column (long text) - controlled by sync_review
         self.review_combo = CustomColumnComboBox(tab, text_columns, prefs.get("review_column", ""))
         self.review_combo.setMinimumWidth(200)
-        columns_layout.addRow("Review:", self.review_combo.widget())
+        self.columns_layout.addRow("Review:", self.review_combo.widget())
+        self.review_row = self.columns_layout.rowCount() - 1
 
-        # Lists column
+        # Lists column - controlled by sync_lists
         self.lists_combo = CustomColumnComboBox(
             tab,
             tags_columns,
@@ -325,7 +359,8 @@ class ConfigWidget:
             initial_items={"tags": "Tags (built-in)", "": "(Not mapped)"},
         )
         self.lists_combo.setMinimumWidth(200)
-        columns_layout.addRow("Lists:", self.lists_combo.widget())
+        self.columns_layout.addRow("Lists:", self.lists_combo.widget())
+        self.lists_row = self.columns_layout.rowCount() - 1
 
         layout.addWidget(columns_group)
 
@@ -386,22 +421,27 @@ class ConfigWidget:
 
         self.sync_rating_checkbox = QCheckBox("Sync rating")
         self.sync_rating_checkbox.setChecked(prefs.get("sync_rating", True))
+        self.sync_rating_checkbox.stateChanged.connect(self._update_column_visibility)
         sync_layout.addWidget(self.sync_rating_checkbox)
 
         self.sync_progress_checkbox = QCheckBox("Sync reading progress")
         self.sync_progress_checkbox.setChecked(prefs.get("sync_progress", True))
+        self.sync_progress_checkbox.stateChanged.connect(self._update_column_visibility)
         sync_layout.addWidget(self.sync_progress_checkbox)
 
         self.sync_dates_checkbox = QCheckBox("Sync dates (started/finished)")
         self.sync_dates_checkbox.setChecked(prefs.get("sync_dates", True))
+        self.sync_dates_checkbox.stateChanged.connect(self._update_column_visibility)
         sync_layout.addWidget(self.sync_dates_checkbox)
 
         self.sync_review_checkbox = QCheckBox("Sync review text")
         self.sync_review_checkbox.setChecked(prefs.get("sync_review", True))
+        self.sync_review_checkbox.stateChanged.connect(self._update_column_visibility)
         sync_layout.addWidget(self.sync_review_checkbox)
 
         self.sync_lists_checkbox = QCheckBox("Sync lists as tags")
         self.sync_lists_checkbox.setChecked(prefs.get("sync_lists", True))
+        self.sync_lists_checkbox.stateChanged.connect(self._update_column_visibility)
         sync_layout.addWidget(self.sync_lists_checkbox)
 
         layout.addWidget(sync_group)
@@ -460,6 +500,41 @@ class ConfigWidget:
 
         self.tabs.addTab(tab, "Sync Options")
 
+    def _create_lab_tab(self):
+        """Create the Lab (experimental features) tab."""
+        from qt.core import (
+            QCheckBox,
+            QGroupBox,
+            QLabel,
+            QVBoxLayout,
+            QWidget,
+        )
+
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # Instructions
+        instructions = QLabel("Experimental features that may change or be removed.")
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+
+        # Lab features group
+        lab_group = QGroupBox("Experimental Features")
+        lab_layout = QVBoxLayout(lab_group)
+
+        self.lab_update_progress_checkbox = QCheckBox("Enable 'Update Reading Progress' menu")
+        self.lab_update_progress_checkbox.setChecked(prefs.get("enable_lab_update_progress", False))
+        lab_layout.addWidget(self.lab_update_progress_checkbox)
+
+        self.lab_lists_checkbox = QCheckBox("Enable 'Lists' menu")
+        self.lab_lists_checkbox.setChecked(prefs.get("enable_lab_lists", False))
+        lab_layout.addWidget(self.lab_lists_checkbox)
+
+        layout.addWidget(lab_group)
+        layout.addStretch()
+
+        self.tabs.addTab(tab, "Lab")
+
     def _get_custom_columns(self, column_types):
         """
         Get custom columns of specific types.
@@ -502,6 +577,48 @@ class ConfigWidget:
     def _get_tags_columns(self):
         """Get columns suitable for tags/lists."""
         return self._get_custom_columns(["text"])
+
+    def _update_column_visibility(self):
+        """Update visibility of column mapping rows based on sync feature toggles."""
+        # Only update if all required attributes exist (after full initialization)
+        if not hasattr(self, "columns_layout"):
+            return
+
+        # Rating row - controlled by sync_rating
+        if hasattr(self, "rating_row"):
+            self.columns_layout.setRowVisible(
+                self.rating_row, self.sync_rating_checkbox.isChecked()
+            )
+
+        # Progress rows - controlled by sync_progress
+        if hasattr(self, "progress_row"):
+            self.columns_layout.setRowVisible(
+                self.progress_row, self.sync_progress_checkbox.isChecked()
+            )
+        if hasattr(self, "progress_percent_row"):
+            self.columns_layout.setRowVisible(
+                self.progress_percent_row, self.sync_progress_checkbox.isChecked()
+            )
+
+        # Date rows - controlled by sync_dates
+        if hasattr(self, "date_started_row"):
+            self.columns_layout.setRowVisible(
+                self.date_started_row, self.sync_dates_checkbox.isChecked()
+            )
+        if hasattr(self, "date_read_row"):
+            self.columns_layout.setRowVisible(
+                self.date_read_row, self.sync_dates_checkbox.isChecked()
+            )
+
+        # Review row - controlled by sync_review
+        if hasattr(self, "review_row"):
+            self.columns_layout.setRowVisible(
+                self.review_row, self.sync_review_checkbox.isChecked()
+            )
+
+        # Lists row - controlled by sync_lists
+        if hasattr(self, "lists_row"):
+            self.columns_layout.setRowVisible(self.lists_row, self.sync_lists_checkbox.isChecked())
 
     def __getattr__(self, name):
         """Delegate attribute access to the internal widget."""
@@ -630,6 +747,7 @@ class ConfigWidget:
         prefs["status_column"] = self.status_combo.get_selected_column()
         prefs["rating_column"] = self.rating_combo.get_selected_column()
         prefs["progress_column"] = self.progress_combo.get_selected_column()
+        prefs["progress_percent_column"] = self.progress_percent_combo.get_selected_column()
         prefs["date_started_column"] = self.date_started_combo.get_selected_column()
         prefs["date_read_column"] = self.date_read_combo.get_selected_column()
         prefs["review_column"] = self.review_combo.get_selected_column()
@@ -673,3 +791,7 @@ class ConfigWidget:
 
         # Save conflict resolution
         prefs["conflict_resolution"] = self.conflict_combo.currentData()
+
+        # Save Lab options
+        prefs["enable_lab_update_progress"] = self.lab_update_progress_checkbox.isChecked()
+        prefs["enable_lab_lists"] = self.lab_lists_checkbox.isChecked()

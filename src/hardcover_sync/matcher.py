@@ -9,8 +9,9 @@ This module provides functions to match Calibre books to Hardcover books:
 
 from dataclasses import dataclass
 
-from .api import Book, HardcoverAPI
+from .api import HardcoverAPI
 from .cache import get_cache
+from .models import Book
 
 
 @dataclass

@@ -96,3 +96,5 @@ typeCheckingMode = "standard"
 pythonVersion = "3.10"
 # Calibre provides these modules at runtime - they're not installable packages
 reportMissingImports = false
+# self._user is set by get_me() but pyright can't track this across method calls
+reportOptionalMemberAccess = false

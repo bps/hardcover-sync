@@ -21,9 +21,10 @@ from qt.core import (
     QVBoxLayout,
 )
 
-from ..api import Book, HardcoverAPI
+from ..api import HardcoverAPI
 from ..config import get_plugin_prefs
 from ..matcher import MatchResult, search_for_calibre_book
+from ..models import Book
 
 
 class LinkBookDialog(QDialog):
