@@ -40,8 +40,16 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 	exit 1
 fi
 
+# Generate changelog
+echo "Generating changelog..."
+git cliff --tag "v$NEXT_VERSION" --output CHANGELOG.md
+
+# Commit changelog
+git add CHANGELOG.md
+git commit -m "docs: update changelog for v$NEXT_VERSION"
+
 # Create annotated tag
 git tag -a "v$NEXT_VERSION" -m "Release v$NEXT_VERSION"
 
 echo "Created tag v$NEXT_VERSION"
-echo "Push with: git push origin v$NEXT_VERSION"
+echo "Push with: git push origin main --tags"
