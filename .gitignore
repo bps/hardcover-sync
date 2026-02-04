@@ -57,3 +57,4 @@ Thumbs.db
 .calibre/source/
 .calibre/config/
 .calibre/library/
+src/hardcover_sync/_version.py
