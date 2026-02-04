@@ -2,7 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.2.0] - 2026-02-04
+
+### Bug Fixes
+
+- Exclude auto-generated _version.py from ruff checks
+
+### CI/CD
+
+- Add release workflow for GitHub releases
+
+### Features
+
+- Commit changelog in bump script
 
 ### Styling
 
