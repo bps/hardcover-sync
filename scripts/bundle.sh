@@ -16,14 +16,8 @@ PACKAGE_NAME="hardcover_sync"
 
 cd "$PROJECT_DIR"
 
-# Get version from versioningit or fallback
-VERSION=$(uv run python -c "
-try:
-    from versioningit import get_version
-    print(get_version('.'))
-except Exception:
-    print('0.0.0.dev0')
-")
+# Get version from git tag (strip 'v' prefix)
+VERSION=$(git describe --tags --always 2>/dev/null | sed 's/^v//' || echo "0.0.0.dev0")
 
 echo "Building $PLUGIN_NAME version $VERSION..."
 
