@@ -170,6 +170,8 @@ The development environment and build tooling for this plugin is based on [RobBr
 
 He wrote the Hardcover metadata source plugin linked above. It's excellent.
 
+The plugin icon uses icons from [Material Design Icons](https://github.com/google/material-design-icons) (Apache 2.0 license).
+
 ## License
 
 GPL-3.0-or-later (same as Calibre)
