@@ -32,6 +32,17 @@ MENU_STATUSES = {
 # Reverse mapping for convenience
 STATUS_IDS = {v: k for k, v in READING_STATUSES.items()}
 
+# Syncable column configuration: (pref_key, display_name)
+# Used for column mapping UI and unmapped column detection
+SYNCABLE_COLUMNS = [
+    ("status_column", "Status"),
+    ("rating_column", "Rating"),
+    ("progress_column", "Progress"),
+    ("date_started_column", "Date Started"),
+    ("date_read_column", "Date Read"),
+    ("review_column", "Review"),
+]
+
 # Default preferences
 DEFAULT_PREFS = {
     # Authentication
@@ -79,6 +90,25 @@ def get_plugin_prefs():
         JSONConfig: The plugin's preferences object.
     """
     return prefs
+
+
+def get_unmapped_columns(plugin_prefs=None) -> list[str]:
+    """
+    Get list of syncable columns that are not mapped.
+
+    Args:
+        plugin_prefs: Plugin preferences dict. Uses global prefs if None.
+
+    Returns:
+        List of display names for unmapped columns.
+    """
+    if plugin_prefs is None:
+        plugin_prefs = prefs
+    unmapped = []
+    for pref_key, display_name in SYNCABLE_COLUMNS:
+        if not plugin_prefs.get(pref_key, ""):
+            unmapped.append(display_name)
+    return unmapped
 
 
 class CustomColumnComboBox:

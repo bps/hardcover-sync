@@ -24,7 +24,7 @@ from qt.core import (
 )
 
 from ..api import HardcoverAPI
-from ..config import READING_STATUSES, get_plugin_prefs
+from ..config import READING_STATUSES, get_plugin_prefs, get_unmapped_columns
 from ..models import UserBook
 from ..sync import (
     NewBookAction,
@@ -322,7 +322,7 @@ class SyncFromHardcoverDialog(QDialog):
                     )
                 else:
                     # Check if columns are mapped
-                    unmapped = self._get_unmapped_columns()
+                    unmapped = get_unmapped_columns(self.prefs)
                     if len(unmapped) == 6:  # All unmapped
                         self.status_label.setText(
                             f"Fetched {len(self.hardcover_books)} books, "
@@ -353,23 +353,6 @@ class SyncFromHardcoverDialog(QDialog):
             self.progress_bar.setVisible(False)
         finally:
             self.fetch_button.setEnabled(True)
-
-    def _get_unmapped_columns(self) -> list[str]:
-        """Get list of unmapped column names."""
-        unmapped = []
-        # All syncable fields
-        columns = [
-            ("status_column", "Status"),
-            ("rating_column", "Rating"),
-            ("review_column", "Review"),
-            ("progress_column", "Progress"),
-            ("date_started_column", "Date Started"),
-            ("date_read_column", "Date Read"),
-        ]
-        for pref_key, display_name in columns:
-            if not self.prefs.get(pref_key, ""):
-                unmapped.append(display_name)
-        return unmapped
 
     def _fetch_all_books(self, api: HardcoverAPI) -> list[UserBook]:
         """Fetch all books from the user's Hardcover library."""

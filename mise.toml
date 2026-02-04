@@ -3,6 +3,7 @@ python = "3.11"
 uv = "latest"
 git-cliff = "latest"
 just = "latest"
+prek = "latest"
 
 [env]
 _.file = ".env"

@@ -23,7 +23,7 @@ from qt.core import (
 )
 
 from ..api import HardcoverAPI
-from ..config import READING_STATUSES, STATUS_IDS, get_plugin_prefs
+from ..config import READING_STATUSES, STATUS_IDS, get_plugin_prefs, get_unmapped_columns
 from ..models import UserBook
 from ..sync import (
     SyncToChange,
@@ -242,22 +242,6 @@ class SyncToHardcoverDialog(QDialog):
             )
             return None
         return HardcoverAPI(token=token)
-
-    def _get_unmapped_columns(self) -> list[str]:
-        """Get list of unmapped column names."""
-        unmapped = []
-        columns = [
-            ("status_column", "Status"),
-            ("rating_column", "Rating"),
-            ("progress_column", "Progress"),
-            ("date_started_column", "Date Started"),
-            ("date_read_column", "Date Read"),
-            ("review_column", "Review"),
-        ]
-        for pref_key, display_name in columns:
-            if not self.prefs.get(pref_key, ""):
-                unmapped.append(display_name)
-        return unmapped
 
     def _analyze_books(self):
         """Analyze the selected books and find changes."""
@@ -507,7 +491,7 @@ class SyncToHardcoverDialog(QDialog):
                 "Use 'Link to Hardcover...' to connect books first."
             )
         elif not self.changes:
-            unmapped = self._get_unmapped_columns()
+            unmapped = get_unmapped_columns(self.prefs)
             if len(unmapped) == 6:  # All unmapped
                 self.status_label.setText(
                     f"Analyzed {linked_count} linked book(s). "

@@ -133,6 +133,19 @@ just lint           # Run linter
 just format         # Format code
 ```
 
+### Pre-commit hooks
+
+This project uses [prek](https://github.com/anomalyco/prek) for pre-commit hooks:
+
+```bash
+# Install hooks (run once after cloning)
+uv run prek install
+uv run prek install --hook-type commit-msg
+
+# Run hooks manually
+uv run prek run --all-files
+```
+
 ### Running tests
 
 ```bash

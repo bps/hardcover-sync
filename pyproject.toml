@@ -26,10 +26,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/brianryall/hardcover-sync"
-Documentation = "https://github.com/brianryall/hardcover-sync#readme"
-Repository = "https://github.com/brianryall/hardcover-sync.git"
-Issues = "https://github.com/brianryall/hardcover-sync/issues"
+Homepage = "https://github.com/bps/hardcover-sync"
+Documentation = "https://github.com/bps/hardcover-sync#readme"
+Repository = "https://github.com/bps/hardcover-sync.git"
+Issues = "https://github.com/bps/hardcover-sync/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -59,7 +59,7 @@ dev = [
     "pytest-cov>=4.0",
     "pytest-mock>=3.14",
     "ruff>=0.8",
-    "lefthook>=1.8",
+    "prek>=0.3",
     "gitlint>=0.19",
 ]
 

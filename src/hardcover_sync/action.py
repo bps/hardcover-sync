@@ -504,7 +504,7 @@ class HardcoverSyncAction(InterfaceAction):
 
     def show_configuration(self):
         """Show the plugin configuration dialog."""
-        if self.interface_action_base_plugin.do_user_config(self.gui, plugin_action=self):
+        if self.interface_action_base_plugin.do_user_config(self.gui, plugin_action=self):  # type: ignore[union-attr]
             # User clicked OK - mark menu for rebuild in case token was added/changed
             self.mark_menu_for_rebuild()
 
@@ -513,8 +513,7 @@ class HardcoverSyncAction(InterfaceAction):
         from calibre.gui2 import open_url
         from qt.core import QUrl
 
-        # TODO: Update with actual documentation URL
-        open_url(QUrl("https://github.com/brianryall/hardcover-sync"))
+        open_url(QUrl("https://github.com/bps/hardcover-sync"))
 
     def _show_no_selection_error(self):
         """Show error when no books are selected."""

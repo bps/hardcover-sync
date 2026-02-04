@@ -147,3 +147,62 @@ class TestGetPluginPrefs:
         from hardcover_sync.config import DEFAULT_PREFS, prefs
 
         assert prefs.defaults == DEFAULT_PREFS
+
+
+# =============================================================================
+# Test SYNCABLE_COLUMNS and get_unmapped_columns
+# =============================================================================
+
+
+class TestSyncableColumns:
+    """Tests for syncable column constants and utilities."""
+
+    def test_syncable_columns_defined(self):
+        """Test that SYNCABLE_COLUMNS is defined with expected entries."""
+        from hardcover_sync.config import SYNCABLE_COLUMNS
+
+        assert len(SYNCABLE_COLUMNS) == 6
+        pref_keys = [col[0] for col in SYNCABLE_COLUMNS]
+        assert "status_column" in pref_keys
+        assert "rating_column" in pref_keys
+        assert "progress_column" in pref_keys
+        assert "date_started_column" in pref_keys
+        assert "date_read_column" in pref_keys
+        assert "review_column" in pref_keys
+
+    def test_get_unmapped_columns_all_unmapped(self):
+        """Test get_unmapped_columns when no columns are mapped."""
+        from hardcover_sync.config import get_unmapped_columns
+
+        # Empty prefs means all unmapped
+        prefs = {}
+        unmapped = get_unmapped_columns(prefs)
+        assert len(unmapped) == 6
+        assert "Status" in unmapped
+        assert "Rating" in unmapped
+
+    def test_get_unmapped_columns_some_mapped(self):
+        """Test get_unmapped_columns when some columns are mapped."""
+        from hardcover_sync.config import get_unmapped_columns
+
+        prefs = {"status_column": "#hc_status", "rating_column": "rating"}
+        unmapped = get_unmapped_columns(prefs)
+        assert len(unmapped) == 4
+        assert "Status" not in unmapped
+        assert "Rating" not in unmapped
+        assert "Progress" in unmapped
+
+    def test_get_unmapped_columns_all_mapped(self):
+        """Test get_unmapped_columns when all columns are mapped."""
+        from hardcover_sync.config import get_unmapped_columns
+
+        prefs = {
+            "status_column": "#hc_status",
+            "rating_column": "rating",
+            "progress_column": "#progress",
+            "date_started_column": "#started",
+            "date_read_column": "#read",
+            "review_column": "#review",
+        }
+        unmapped = get_unmapped_columns(prefs)
+        assert len(unmapped) == 0

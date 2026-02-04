@@ -7,7 +7,8 @@ default:
 # Install dependencies and set up development environment
 install: && setenv
     uv sync
-    uv run lefthook install
+    uv run prek install
+    uv run prek install --hook-type commit-msg
     just .calibre/source
 
 # Write .env with Calibre configuration paths
