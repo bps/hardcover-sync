@@ -31,7 +31,7 @@ jobs:
         run: uv run ruff check src/ test/
 
       - name: Check formatting
-        run: uv run ruff format --check src/ test/
+        run: uv run ruff format --check src/ test/ --exclude src/hardcover_sync/_version.py
 
       - name: Run tests
         run: uv run pytest --tb=short -q
