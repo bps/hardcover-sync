@@ -161,13 +161,14 @@ class TestSyncableColumns:
         """Test that SYNCABLE_COLUMNS is defined with expected entries."""
         from hardcover_sync.config import SYNCABLE_COLUMNS
 
-        assert len(SYNCABLE_COLUMNS) == 6
+        assert len(SYNCABLE_COLUMNS) == 7
         pref_keys = [col[0] for col in SYNCABLE_COLUMNS]
         assert "status_column" in pref_keys
         assert "rating_column" in pref_keys
         assert "progress_column" in pref_keys
         assert "date_started_column" in pref_keys
         assert "date_read_column" in pref_keys
+        assert "is_read_column" in pref_keys
         assert "review_column" in pref_keys
 
     def test_get_unmapped_columns_all_unmapped(self):
@@ -177,7 +178,7 @@ class TestSyncableColumns:
         # Empty prefs means all unmapped
         prefs = {}
         unmapped = get_unmapped_columns(prefs)
-        assert len(unmapped) == 6
+        assert len(unmapped) == 7
         assert "Status" in unmapped
         assert "Rating" in unmapped
 
@@ -187,7 +188,7 @@ class TestSyncableColumns:
 
         prefs = {"status_column": "#hc_status", "rating_column": "rating"}
         unmapped = get_unmapped_columns(prefs)
-        assert len(unmapped) == 4
+        assert len(unmapped) == 5
         assert "Status" not in unmapped
         assert "Rating" not in unmapped
         assert "Progress" in unmapped
@@ -202,6 +203,7 @@ class TestSyncableColumns:
             "progress_column": "#progress",
             "date_started_column": "#started",
             "date_read_column": "#read",
+            "is_read_column": "#is_read",
             "review_column": "#review",
         }
         unmapped = get_unmapped_columns(prefs)

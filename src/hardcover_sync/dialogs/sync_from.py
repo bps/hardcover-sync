@@ -208,6 +208,7 @@ class SyncFromHardcoverDialog(QDialog):
             ("rating_column", "Rating"),
             ("review_column", "Review"),
             ("progress_column", "Progress"),
+            ("is_read_column", "Is Read"),
             ("date_started_column", "Date Started"),
             ("date_read_column", "Date Read"),
         ]
@@ -1021,6 +1022,7 @@ class SyncFromHardcoverDialog(QDialog):
             "progress_percent": self.prefs.get("progress_percent_column", ""),
             "date_started": self.prefs.get("date_started_column", ""),
             "date_read": self.prefs.get("date_read_column", ""),
+            "is_read": self.prefs.get("is_read_column", ""),
             "review": self.prefs.get("review_column", ""),
         }
         return mapping.get(field)

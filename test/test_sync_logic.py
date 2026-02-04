@@ -909,6 +909,181 @@ class TestFindSyncFromChangesDates:
         assert changes[0].new_value == "2024-06-20"
 
 
+class TestFindSyncFromChangesIsRead:
+    """Tests for is_read boolean sync in find_sync_from_changes."""
+
+    def create_user_book_with_reads(
+        self,
+        book_id: int,
+        status_id: int = 3,
+        started_at: str = None,
+        finished_at: str = None,
+    ) -> UserBook:
+        """Helper to create a UserBook with reads for testing."""
+        from hardcover_sync.models import UserBookRead
+
+        reads = []
+        if started_at or finished_at:
+            reads.append(
+                UserBookRead(
+                    id=1,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+            )
+
+        return UserBook(
+            id=1,
+            book_id=book_id,
+            status_id=status_id,
+            reads=reads if reads else None,
+        )
+
+    def test_is_read_true_when_status_is_read(self):
+        """Test is_read becomes True when book status is 'Read' (status_id=3)."""
+        hc_books = [self.create_user_book_with_reads(100, status_id=3)]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            if col == "is_read_col":
+                return False  # Currently not marked as read
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "is_read_column": "is_read_col",
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        # Find the is_read change
+        is_read_changes = [c for c in changes if c.field == "is_read"]
+        assert len(is_read_changes) == 1
+        assert is_read_changes[0].old_value == "No"
+        assert is_read_changes[0].new_value == "Yes"
+
+    def test_is_read_false_when_status_is_not_read(self):
+        """Test is_read becomes False when book status is not 'Read'."""
+        # Book with status "Currently Reading" (status_id=2)
+        hc_books = [self.create_user_book_with_reads(100, status_id=2, started_at="2024-03-15")]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            if col == "is_read_col":
+                return True  # Currently marked as read (incorrectly)
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "is_read_column": "is_read_col",
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        is_read_changes = [c for c in changes if c.field == "is_read"]
+        assert len(is_read_changes) == 1
+        assert is_read_changes[0].old_value == "Yes"
+        assert is_read_changes[0].new_value == "No"
+
+    def test_is_read_no_change_when_already_correct(self):
+        """Test no change when is_read already matches status."""
+        hc_books = [self.create_user_book_with_reads(100, status_id=3, finished_at="2024-06-20")]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            if col == "is_read_col":
+                return True  # Already correctly marked as read
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "is_read_column": "is_read_col",
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        is_read_changes = [c for c in changes if c.field == "is_read"]
+        assert len(is_read_changes) == 0
+
+    def test_is_read_change_from_none_to_true(self):
+        """Test is_read change when column is None (unset) and book status is Read."""
+        hc_books = [self.create_user_book_with_reads(100, status_id=3, finished_at="2024-06-20")]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            return None  # No current value
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "is_read_column": "is_read_col",
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        is_read_changes = [c for c in changes if c.field == "is_read"]
+        assert len(is_read_changes) == 1
+        assert is_read_changes[0].old_value == "No"
+        assert is_read_changes[0].new_value == "Yes"
+
+    def test_is_read_not_synced_when_column_not_configured(self):
+        """Test is_read is not synced when column is not configured."""
+        hc_books = [self.create_user_book_with_reads(100, status_id=3, finished_at="2024-06-20")]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "is_read_column": "",  # Not configured
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        is_read_changes = [c for c in changes if c.field == "is_read"]
+        assert len(is_read_changes) == 0
+
+    def test_is_read_synced_even_when_sync_dates_disabled(self):
+        """Test is_read is synced regardless of sync_dates setting (it's status-based, not date-based)."""
+        hc_books = [self.create_user_book_with_reads(100, status_id=3, finished_at="2024-06-20")]
+        hc_to_calibre = {100: 1}
+
+        def get_value(calibre_id, col):
+            if col == "is_read_col":
+                return False
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "is_read_column": "is_read_col",
+            "sync_dates": False,  # Disabled, but is_read should still sync
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        is_read_changes = [c for c in changes if c.field == "is_read"]
+        assert len(is_read_changes) == 1
+        assert is_read_changes[0].new_value == "Yes"
+
+
 class TestConvertRatingFromCalibreOtherColumn:
     """Test rating conversion for non-standard column names."""
 

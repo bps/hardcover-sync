@@ -21,6 +21,7 @@ FIELD_DISPLAY_NAMES = {
     "progress_percent": "Progress (%)",
     "date_started": "Date Started",
     "date_read": "Date Read",
+    "is_read": "Is Read",
     "review": "Review",
 }
 
@@ -278,6 +279,7 @@ def find_sync_from_changes(
     progress_percent_col = prefs.get("progress_percent_column", "")
     date_started_col = prefs.get("date_started_column", "")
     date_read_col = prefs.get("date_read_column", "")
+    is_read_col = prefs.get("is_read_column", "")
     review_col = prefs.get("review_column", "")
 
     # Get sync options
@@ -409,6 +411,25 @@ def find_sync_from_changes(
                                 new_value=new_date,
                             )
                         )
+
+        # Check is_read boolean (Yes when status is "Read", i.e. status_id == 3)
+        if is_read_col:
+            is_read = hc_book.status_id == 3
+            current = get_calibre_value(calibre_id, is_read_col)
+            # Normalize current value to boolean for comparison
+            current_bool = bool(current) if current is not None else False
+            if current_bool != is_read:
+                changes.append(
+                    SyncChange(
+                        calibre_id=calibre_id,
+                        calibre_title=calibre_title,
+                        hardcover_book_id=hc_book.book_id,
+                        field="is_read",
+                        old_value="Yes" if current_bool else "No",
+                        new_value="Yes" if is_read else "No",
+                        raw_value="Yes" if is_read else "",
+                    )
+                )
 
         # Check review
         if sync_review and review_col and hc_book.review:

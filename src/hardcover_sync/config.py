@@ -40,6 +40,7 @@ SYNCABLE_COLUMNS = [
     ("progress_column", "Progress"),
     ("date_started_column", "Date Started"),
     ("date_read_column", "Date Read"),
+    ("is_read_column", "Is Read"),
     ("review_column", "Review"),
 ]
 
@@ -56,6 +57,7 @@ DEFAULT_PREFS = {
     "progress_percent_column": "",  # Float column for percentage (0-100)
     "date_started_column": "",
     "date_read_column": "",
+    "is_read_column": "",  # Boolean Yes/No column (True when status is "Read")
     "review_column": "",
     "lists_column": "",
     "use_tags_for_lists": True,
@@ -327,6 +329,7 @@ class ConfigWidget:
         int_columns = self._get_custom_columns(["int"])
         float_columns = self._get_custom_columns(["float"])
         date_columns = self._get_custom_columns(["datetime"])
+        bool_columns = self._get_custom_columns(["bool"])
         text_columns = self._get_custom_columns(["text", "comments"])
         tags_columns = self._get_tags_columns()
 
@@ -374,6 +377,15 @@ class ConfigWidget:
         self.date_read_combo.setMinimumWidth(200)
         self.columns_layout.addRow("Date Read:", self.date_read_combo.widget())
         self.date_read_row = self.columns_layout.rowCount() - 1
+
+        # Is Read column (boolean Yes/No) - controlled by sync_dates
+        # Automatically set to Yes when date_read is set
+        self.is_read_combo = CustomColumnComboBox(
+            tab, bool_columns, prefs.get("is_read_column", "")
+        )
+        self.is_read_combo.setMinimumWidth(200)
+        self.columns_layout.addRow("Is Read (Yes/No):", self.is_read_combo.widget())
+        self.is_read_row = self.columns_layout.rowCount() - 1
 
         # Review column (long text) - controlled by sync_review
         self.review_combo = CustomColumnComboBox(tab, text_columns, prefs.get("review_column", ""))
@@ -780,6 +792,7 @@ class ConfigWidget:
         prefs["progress_percent_column"] = self.progress_percent_combo.get_selected_column()
         prefs["date_started_column"] = self.date_started_combo.get_selected_column()
         prefs["date_read_column"] = self.date_read_combo.get_selected_column()
+        prefs["is_read_column"] = self.is_read_combo.get_selected_column()
         prefs["review_column"] = self.review_combo.get_selected_column()
 
         # Lists column handling
