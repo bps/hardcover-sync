@@ -80,9 +80,9 @@ class TestBundledDependencies:
             file_list = zf.namelist()
 
             for required_file in REQUIRED_PLUGIN_FILES:
-                assert (
-                    required_file in file_list
-                ), f"Required file '{required_file}' not found in plugin zip"
+                assert required_file in file_list, (
+                    f"Required file '{required_file}' not found in plugin zip"
+                )
 
     def test_required_packages_bundled(self, plugin_zip_path):
         """Verify all required dependency packages are bundled."""
@@ -94,9 +94,9 @@ class TestBundledDependencies:
                 package_files = [
                     f for f in file_list if f.startswith(f"{package}/") or f == f"{package}.py"
                 ]
-                assert (
-                    len(package_files) > 0
-                ), f"Required package '{package}' not found in plugin zip"
+                assert len(package_files) > 0, (
+                    f"Required package '{package}' not found in plugin zip"
+                )
 
     def test_gql_package_complete(self, plugin_zip_path):
         """Verify the gql package has all required submodules."""
@@ -113,9 +113,9 @@ class TestBundledDependencies:
             file_list = zf.namelist()
 
             for required_file in required_gql_files:
-                assert (
-                    required_file in file_list
-                ), f"Required gql file '{required_file}' not found in plugin zip"
+                assert required_file in file_list, (
+                    f"Required gql file '{required_file}' not found in plugin zip"
+                )
 
     def test_graphql_core_package_complete(self, plugin_zip_path):
         """Verify the graphql-core package has required submodules."""
@@ -129,9 +129,9 @@ class TestBundledDependencies:
             file_list = zf.namelist()
 
             for required_file in required_graphql_files:
-                assert (
-                    required_file in file_list
-                ), f"Required graphql file '{required_file}' not found in plugin zip"
+                assert required_file in file_list, (
+                    f"Required graphql file '{required_file}' not found in plugin zip"
+                )
 
     def test_no_test_files_bundled(self, plugin_zip_path):
         """Verify test files are not included in the bundle."""
