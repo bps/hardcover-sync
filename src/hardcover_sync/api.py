@@ -5,18 +5,9 @@ This module provides the HardcoverAPI class for interacting with
 the Hardcover.app GraphQL API.
 """
 
-import sys
 from datetime import date
-from pathlib import Path
 from typing import Any
 
-# Add plugin directory to path for bundled dependencies
-# This is needed because Calibre's plugin system uses a custom namespace
-_plugin_dir = Path(__file__).parent
-if str(_plugin_dir) not in sys.path:
-    sys.path.insert(0, str(_plugin_dir))
-
-# These packages are bundled with the plugin and added to sys.path above
 from gql import Client, gql  # noqa: E402
 from gql.graphql_request import GraphQLRequest  # noqa: E402
 from gql.transport.exceptions import TransportQueryError  # noqa: E402

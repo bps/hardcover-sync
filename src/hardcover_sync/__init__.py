@@ -5,11 +5,30 @@ This plugin allows bidirectional synchronization of reading status,
 ratings, progress, and lists between Calibre and Hardcover.app.
 """
 
+import sys
+from pathlib import Path
+
+# Add plugin directory to sys.path FIRST for bundled dependencies (gql, graphql-core)
+# This must happen before any other imports to avoid conflicts with system packages
+_plugin_dir = Path(__file__).parent
+if str(_plugin_dir) not in sys.path:
+    sys.path.insert(0, str(_plugin_dir))
+
+# Remove any pre-loaded graphql/gql modules so our bundled versions are used
+# This is necessary because Calibre or its environment may have older versions
+_modules_to_remove = [
+    key
+    for key in sys.modules
+    if key == "graphql" or key.startswith("graphql.") or key == "gql" or key.startswith("gql.")
+]
+for mod in _modules_to_remove:
+    del sys.modules[mod]
+
 # Calibre imports - only available in Calibre's runtime environment
-from calibre.customize import InterfaceActionBase
+from calibre.customize import InterfaceActionBase  # noqa: E402
 
 try:
-    from ._version import __version__, __version_tuple__
+    from ._version import __version__, __version_tuple__  # noqa: E402
 except ImportError:
     __version__ = "0.0.0.dev0"
     __version_tuple__ = (0, 0, 0, "dev0")
