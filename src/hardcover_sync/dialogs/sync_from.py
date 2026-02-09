@@ -113,17 +113,13 @@ class SyncFromHardcoverDialog(QDialog):
         self.fetch_button.clicked.connect(self._on_fetch)
         fetch_layout.addWidget(self.fetch_button)
 
-        # Checkbox to create new books (only for full-library sync)
+        # Checkbox to create new books
         self.create_books_checkbox = QCheckBox("Add books not in Calibre")
         self.create_books_checkbox.setToolTip(
-            "Create new Calibre entries for Hardcover books that aren't in your library yet"
+            "Create new Calibre entries for Hardcover books that aren't in your library yet.\n"
+            "When checked, a full library fetch is performed to discover unlinked books."
         )
         self.create_books_checkbox.setChecked(False)
-        if self.scoped_book_ids is not None:
-            self.create_books_checkbox.setEnabled(False)
-            self.create_books_checkbox.setToolTip(
-                "Only available when syncing entire library (select all books or no books)"
-            )
         fetch_layout.addWidget(self.create_books_checkbox)
 
         fetch_layout.addStretch()
@@ -327,16 +323,25 @@ class SyncFromHardcoverDialog(QDialog):
         QApplication.processEvents()
 
         try:
-            # Build the map first so we know which HC book IDs to fetch
+            want_new_books = self.create_books_checkbox.isChecked()
+
+            # Build the map of linked books for the current scope
             hc_to_calibre = self._build_hardcover_to_calibre_map()
 
-            if is_scoped and hc_to_calibre:
+            if want_new_books:
+                # Need a full library fetch to discover unlinked books
+                self.hardcover_books = self._fetch_all_books(api)
+                # Build the full map so we correctly identify which books are new
+                full_hc_to_calibre = self._build_full_hardcover_to_calibre_map()
+            elif is_scoped and hc_to_calibre:
                 # Targeted fetch: only request the specific books from the API
                 hc_book_ids = list(hc_to_calibre.keys())
                 self.hardcover_books = self._fetch_books_by_ids(api, hc_book_ids)
+                full_hc_to_calibre = hc_to_calibre
             else:
                 # Full library fetch
                 self.hardcover_books = self._fetch_all_books(api)
+                full_hc_to_calibre = hc_to_calibre
 
             matched_count = sum(1 for hb in self.hardcover_books if hb.book_id in hc_to_calibre)
 
@@ -349,10 +354,10 @@ class SyncFromHardcoverDialog(QDialog):
             # Find changes for linked books
             self.changes = self._find_changes(hc_to_calibre)
 
-            # Find new books to create (if checkbox is checked, only for full-library sync)
+            # Find new books to create (if checkbox is checked)
             self.new_books = []
-            if self.create_books_checkbox.isChecked() and not is_scoped:
-                self.new_books = self._find_new_books(hc_to_calibre)
+            if want_new_books:
+                self.new_books = self._find_new_books(full_hc_to_calibre)
 
             self._populate_changes_tree()
 
@@ -468,6 +473,25 @@ class SyncFromHardcoverDialog(QDialog):
             book_ids = list(self.db.all_book_ids())
 
         for book_id in book_ids:
+            identifiers = self.db.field_for("identifiers", book_id) or {}
+            hc_id = identifiers.get("hardcover")
+            if hc_id:
+                try:
+                    hc_to_calibre[int(hc_id)] = book_id
+                except (ValueError, TypeError):
+                    pass
+
+        return hc_to_calibre
+
+    def _build_full_hardcover_to_calibre_map(self) -> dict[int, int]:
+        """Build a map from Hardcover book ID to Calibre book ID for the entire library.
+
+        Unlike _build_hardcover_to_calibre_map, this always covers all books
+        regardless of any selection scope. Used for new-book discovery.
+        """
+        hc_to_calibre = {}
+
+        for book_id in self.db.all_book_ids():
             identifiers = self.db.field_for("identifiers", book_id) or {}
             hc_id = identifiers.get("hardcover")
             if hc_id:

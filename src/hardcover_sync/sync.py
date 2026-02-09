@@ -516,7 +516,7 @@ def find_new_books(
             )
         )
 
-        return new_books
+    return new_books
 
 
 def coerce_value_for_column(value: str | bool | None, datatype: str) -> Any:
