@@ -4,6 +4,8 @@ Sync from Hardcover dialog.
 This dialog fetches the user's Hardcover library and syncs data to Calibre.
 """
 
+from __future__ import annotations
+
 # Qt imports - only available in Calibre's runtime environment
 from qt.core import (
     QAbstractItemView,
@@ -29,6 +31,7 @@ from ..models import UserBook
 from ..sync import (
     NewBookAction,
     SyncChange,
+    coerce_value_for_column,
     convert_rating_to_calibre,
     find_new_books,
     find_sync_from_changes,
@@ -588,7 +591,7 @@ class SyncFromHardcoverDialog(QDialog):
         self.expand_all_button.setEnabled(has_items)
         self.collapse_all_button.setEnabled(has_items)
 
-    def _on_item_changed(self, item: QTreeWidgetItem, column: int):
+    def _on_item_changed(self, item: QTreeWidgetItem, column: int):  # type: ignore[reportInvalidTypeForm]
         """Handle checkbox state changes in the tree."""
         if column != 0:
             return
@@ -650,7 +653,7 @@ class SyncFromHardcoverDialog(QDialog):
         self.changes_tree.blockSignals(False)
         self._update_summary()
 
-    def _set_children_checked(self, item: QTreeWidgetItem, checked: bool):
+    def _set_children_checked(self, item: QTreeWidgetItem, checked: bool):  # type: ignore[reportInvalidTypeForm]
         """Recursively set all children to checked/unchecked state."""
         for i in range(item.childCount()):
             child = item.child(i)
@@ -666,7 +669,7 @@ class SyncFromHardcoverDialog(QDialog):
                     # Recurse into book's children (individual changes)
                     self._set_children_checked(child, checked)
 
-    def _update_parent_check_state(self, parent: QTreeWidgetItem):
+    def _update_parent_check_state(self, parent: QTreeWidgetItem):  # type: ignore[reportInvalidTypeForm]
         """Update parent checkbox based on children states."""
         checked_count = 0
         unchecked_count = 0
@@ -886,22 +889,8 @@ class SyncFromHardcoverDialog(QDialog):
                 if not col_info:
                     return False, f"Column {column} not found"
 
-                datatype = col_info.get("datatype")
-                if datatype == "int":
-                    value = int(value) if value else None
-                elif datatype == "float":
-                    value = float(value) if value else None
-                elif datatype == "datetime":
-                    # Parse date string
-                    from datetime import datetime
-
-                    if value:
-                        value = datetime.fromisoformat(value)
-                    else:
-                        value = None
-                elif datatype == "rating":
-                    # raw_value is already in 0-10 scale for rating columns
-                    value = int(float(value)) if value else None
+                datatype = col_info.get("datatype", "text")
+                value = coerce_value_for_column(value, datatype)
 
                 self.db.set_field(column, {change.calibre_id: value})
             else:

@@ -9,6 +9,7 @@ from hardcover_sync.sync import (
     NewBookAction,
     SyncChange,
     SyncToChange,
+    coerce_value_for_column,
     convert_rating_from_calibre,
     convert_rating_to_calibre,
     extract_date,
@@ -1092,3 +1093,127 @@ class TestConvertRatingFromCalibreOtherColumn:
         # This covers line 181 - the else branch for non-standard column names
         result = convert_rating_from_calibre(4.0, "my_custom_field")
         assert result == 4.0
+
+
+class TestCoerceValueForColumn:
+    """Tests for coerce_value_for_column function."""
+
+    # --- None / empty handling ---
+
+    def test_none_returns_none(self):
+        """None input returns None for any datatype."""
+        assert coerce_value_for_column(None, "bool") is None
+        assert coerce_value_for_column(None, "int") is None
+        assert coerce_value_for_column(None, "float") is None
+        assert coerce_value_for_column(None, "datetime") is None
+        assert coerce_value_for_column(None, "rating") is None
+        assert coerce_value_for_column(None, "text") is None
+
+    def test_empty_string_returns_none(self):
+        """Empty string returns None for any datatype."""
+        assert coerce_value_for_column("", "bool") is None
+        assert coerce_value_for_column("", "int") is None
+        assert coerce_value_for_column("", "float") is None
+        assert coerce_value_for_column("", "datetime") is None
+        assert coerce_value_for_column("", "rating") is None
+        assert coerce_value_for_column("", "text") is None
+
+    # --- Bool coercion ---
+
+    def test_bool_yes_string(self):
+        """String 'Yes' coerces to True."""
+        assert coerce_value_for_column("Yes", "bool") is True
+
+    def test_bool_no_string(self):
+        """String 'No' coerces to False."""
+        assert coerce_value_for_column("No", "bool") is False
+
+    def test_bool_true_string(self):
+        """String 'true' coerces to True."""
+        assert coerce_value_for_column("true", "bool") is True
+
+    def test_bool_false_string(self):
+        """String 'false' coerces to False."""
+        assert coerce_value_for_column("false", "bool") is False
+
+    def test_bool_one_string(self):
+        """String '1' coerces to True."""
+        assert coerce_value_for_column("1", "bool") is True
+
+    def test_bool_zero_string(self):
+        """String '0' coerces to False."""
+        assert coerce_value_for_column("0", "bool") is False
+
+    def test_bool_case_insensitive(self):
+        """Bool coercion is case-insensitive."""
+        assert coerce_value_for_column("YES", "bool") is True
+        assert coerce_value_for_column("True", "bool") is True
+        assert coerce_value_for_column("TRUE", "bool") is True
+
+    def test_bool_true_passthrough(self):
+        """Actual True bool passes through unchanged."""
+        assert coerce_value_for_column(True, "bool") is True
+
+    def test_bool_false_passthrough(self):
+        """Actual False bool passes through unchanged."""
+        assert coerce_value_for_column(False, "bool") is False
+
+    # --- Int coercion ---
+
+    def test_int_string(self):
+        """String '42' coerces to int 42."""
+        assert coerce_value_for_column("42", "int") == 42
+
+    def test_int_zero_string(self):
+        """String '0' coerces to int 0."""
+        assert coerce_value_for_column("0", "int") == 0
+
+    # --- Float coercion ---
+
+    def test_float_string(self):
+        """String '3.14' coerces to float."""
+        assert coerce_value_for_column("3.14", "float") == 3.14
+
+    def test_float_integer_string(self):
+        """String '5' coerces to float 5.0."""
+        assert coerce_value_for_column("5", "float") == 5.0
+
+    # --- Datetime coercion ---
+
+    def test_datetime_iso_string(self):
+        """ISO date string coerces to datetime."""
+        from datetime import datetime
+
+        result = coerce_value_for_column("2024-06-20", "datetime")
+        assert result == datetime(2024, 6, 20)
+
+    def test_datetime_iso_with_time(self):
+        """ISO datetime string with time coerces correctly."""
+        from datetime import datetime
+
+        result = coerce_value_for_column("2024-06-20T14:30:00", "datetime")
+        assert result == datetime(2024, 6, 20, 14, 30, 0)
+
+    # --- Rating coercion ---
+
+    def test_rating_string(self):
+        """String '8' coerces to int 8."""
+        assert coerce_value_for_column("8", "rating") == 8
+
+    def test_rating_float_string(self):
+        """String '7.5' coerces to int 7 (truncated, not rounded)."""
+        assert coerce_value_for_column("7.5", "rating") == 7
+
+    # --- Text passthrough ---
+
+    def test_text_passthrough(self):
+        """Text values pass through unchanged."""
+        assert coerce_value_for_column("hello world", "text") == "hello world"
+
+    def test_comments_passthrough(self):
+        """Comments values pass through unchanged."""
+        assert coerce_value_for_column("<p>review</p>", "comments") == "<p>review</p>"
+
+    def test_unknown_datatype_passthrough(self):
+        """Unknown datatype passes through unchanged."""
+        assert coerce_value_for_column("something", "enumeration") == "something"

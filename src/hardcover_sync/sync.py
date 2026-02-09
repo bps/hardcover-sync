@@ -516,4 +516,42 @@ def find_new_books(
             )
         )
 
-    return new_books
+        return new_books
+
+
+def coerce_value_for_column(value: str | bool | None, datatype: str) -> Any:
+    """Coerce a string value to the type expected by Calibre for a given column datatype.
+
+    This handles the conversion from string API values (as stored in SyncChange)
+    to the native Python types that Calibre's db.set_field() expects.
+
+    Args:
+            value: The string value to coerce, a bool, or None.
+            datatype: The Calibre column datatype (e.g., "int", "float", "datetime",
+                                "rating", "bool", "text", "comments").
+
+    Returns:
+            The coerced value in the appropriate Python type.
+    """
+    if value is None or (isinstance(value, str) and value == ""):
+        return None
+
+    if datatype == "int":
+        return int(value)
+    elif datatype == "float":
+        return float(value)
+    elif datatype == "datetime":
+        from datetime import datetime
+
+        return datetime.fromisoformat(str(value))
+    elif datatype == "rating":
+        return int(float(value))
+    elif datatype == "bool":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in ("yes", "true", "1")
+        return bool(value)
+    else:
+        # text, comments, etc. - return as-is
+        return value
