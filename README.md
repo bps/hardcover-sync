@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/hardcover_sync/images/hardcover_sync.png" alt="Hardcover Sync" width="128" height="128">
+  <img src="src/hardcover_sync/images/hardcover-sync.svg" alt="Hardcover Sync" width="102" height="128">
 </p>
 
 # Hardcover Sync
