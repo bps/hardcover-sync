@@ -14,7 +14,7 @@ from qt.core import (
 
 from ..api import HardcoverAPI
 from ..config import get_plugin_prefs
-from ..matcher import get_hardcover_id
+from ..matcher import get_hardcover_slug, resolve_hardcover_book
 
 
 class HardcoverDialogBase(QDialog):
@@ -52,25 +52,42 @@ class HardcoverDialogBase(QDialog):
             return None
         return HardcoverAPI(token=token)
 
-    def _get_book_info(self) -> list[dict]:
+    def _get_book_info(self, api: HardcoverAPI | None = None) -> list[dict]:
         """
         Get info about books that are linked to Hardcover.
 
+        Args:
+            api: Optional HardcoverAPI instance for resolving slug-based identifiers
+                 to integer book IDs. When provided, slugs are resolved via API lookup.
+                 When not provided, only legacy numeric identifiers are resolved.
+
         Returns:
-            List of dicts with calibre_id, hardcover_id, and title.
+            List of dicts with calibre_id, hardcover_id (int), hardcover_slug, and title.
         """
         books = []
         for book_id in self.book_ids:
-            hc_id = get_hardcover_id(self.db, book_id)
-            if hc_id:
+            hc_slug = get_hardcover_slug(self.db, book_id)
+            if hc_slug:
                 title = self.db.field_for("title", book_id) or "Unknown"
-                books.append(
-                    {
-                        "calibre_id": book_id,
-                        "hardcover_id": hc_id,
-                        "title": title,
-                    }
-                )
+                # Resolve slug to integer book ID for API calls
+                hc_int_id = None
+                try:
+                    hc_int_id = int(hc_slug)
+                except (ValueError, TypeError):
+                    # Slug-based identifier: resolve via API if available
+                    if api:
+                        book = resolve_hardcover_book(api, hc_slug)
+                        if book:
+                            hc_int_id = book.id
+                if hc_int_id is not None:
+                    books.append(
+                        {
+                            "calibre_id": book_id,
+                            "hardcover_id": hc_int_id,
+                            "hardcover_slug": hc_slug,
+                            "title": title,
+                        }
+                    )
         return books
 
     def _setup_not_linked_ui(self, layout: QVBoxLayout):

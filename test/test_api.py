@@ -1281,6 +1281,50 @@ class TestGetBookById:
         assert book is None
 
 
+class TestGetBookBySlug:
+    """Tests for the get_book_by_slug method."""
+
+    def test_get_book_by_slug(self, api, mock_client):
+        """Test getting a book by slug."""
+        mock_client.return_value.execute.return_value = {
+            "books": [
+                {
+                    "id": 789,
+                    "title": "The Great Gatsby",
+                    "slug": "the-great-gatsby",
+                    "release_date": "1925-04-10",
+                    "contributions": [{"author": {"id": 111, "name": "F. Scott Fitzgerald"}}],
+                    "editions": [
+                        {
+                            "id": 456,
+                            "isbn_13": "9780743273565",
+                            "isbn_10": "0743273567",
+                            "title": "The Great Gatsby (Scribner)",
+                            "pages": 180,
+                        }
+                    ],
+                }
+            ]
+        }
+
+        book = api.get_book_by_slug("the-great-gatsby")
+
+        assert book is not None
+        assert book.id == 789
+        assert book.title == "The Great Gatsby"
+        assert book.slug == "the-great-gatsby"
+        assert len(book.authors) == 1
+        assert book.authors[0].name == "F. Scott Fitzgerald"
+
+    def test_get_book_by_slug_not_found(self, api, mock_client):
+        """Test getting a book by slug that doesn't exist."""
+        mock_client.return_value.execute.return_value = {"books": []}
+
+        book = api.get_book_by_slug("nonexistent-book")
+
+        assert book is None
+
+
 class TestGetBookLists:
     """Tests for the get_book_lists method."""
 
@@ -1342,6 +1386,125 @@ class TestGetBookLists:
         lists = api.get_book_lists(book_id=789)
 
         assert lists == []
+
+
+class TestGetUserBooksBySlugs:
+    """Tests for the get_user_books_by_slugs method."""
+
+    def test_get_user_books_by_slugs(self, api, mock_client):
+        """Test fetching user books by slug list."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {
+                "user_books": [
+                    {
+                        "id": 1001,
+                        "book_id": 789,
+                        "edition_id": 456,
+                        "status_id": 3,
+                        "rating": 4.5,
+                        "review_raw": "Great book!",
+                        "created_at": "2024-01-01T00:00:00",
+                        "updated_at": "2024-01-15T00:00:00",
+                        "book": {
+                            "id": 789,
+                            "title": "The Great Gatsby",
+                            "slug": "the-great-gatsby",
+                            "release_date": "1925-04-10",
+                            "contributions": [
+                                {"author": {"id": 111, "name": "F. Scott Fitzgerald"}}
+                            ],
+                        },
+                        "edition": {
+                            "id": 456,
+                            "isbn_13": "9780743273565",
+                            "isbn_10": "0743273567",
+                            "title": "The Great Gatsby (Scribner)",
+                            "pages": 180,
+                        },
+                        "user_book_reads": [],
+                    },
+                    {
+                        "id": 1002,
+                        "book_id": 100,
+                        "edition_id": None,
+                        "status_id": 1,
+                        "rating": None,
+                        "review_raw": None,
+                        "created_at": "2024-02-01T00:00:00",
+                        "updated_at": "2024-02-01T00:00:00",
+                        "book": {
+                            "id": 100,
+                            "title": "Dune",
+                            "slug": "dune",
+                            "release_date": "1965-08-01",
+                            "contributions": [{"author": {"id": 222, "name": "Frank Herbert"}}],
+                        },
+                        "edition": None,
+                        "user_book_reads": [],
+                    },
+                ]
+            },
+        ]
+
+        books = api.get_user_books_by_slugs(["the-great-gatsby", "dune"])
+
+        assert len(books) == 2
+        assert books[0].id == 1001
+        assert books[0].book.slug == "the-great-gatsby"
+        assert books[1].id == 1002
+        assert books[1].book.slug == "dune"
+
+    def test_get_user_books_by_slugs_empty(self, api, mock_client):
+        """Test fetching user books by slugs when none match."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {"user_books": []},
+        ]
+
+        books = api.get_user_books_by_slugs(["nonexistent-book"])
+
+        assert books == []
+
+    def test_get_user_books_by_slugs_batching(self, api, mock_client):
+        """Test that large slug lists are batched in groups of 100."""
+        # Create 150 slugs to trigger batching
+        slugs = [f"book-{i}" for i in range(150)]
+
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            # First batch (100 slugs)
+            {"user_books": []},
+            # Second batch (50 slugs)
+            {"user_books": []},
+        ]
+
+        books = api.get_user_books_by_slugs(slugs)
+
+        assert books == []
+        # get_me + 2 batches = 3 calls
+        assert mock_client.return_value.execute.call_count == 3
 
 
 # =============================================================================

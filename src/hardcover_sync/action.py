@@ -197,7 +197,7 @@ class HardcoverSyncAction(InterfaceAction):
         """Set the reading status for selected books on Hardcover."""
         from calibre.gui2 import error_dialog, info_dialog
 
-        from .matcher import get_hardcover_id
+        from .matcher import get_hardcover_slug, resolve_hardcover_book
 
         book_ids = self.get_selected_book_ids()
         if not book_ids:
@@ -215,23 +215,29 @@ class HardcoverSyncAction(InterfaceAction):
         errors = []
 
         for book_id in book_ids:
-            hc_id = get_hardcover_id(db, book_id)
+            hc_slug = get_hardcover_slug(db, book_id)
             title = db.field_for("title", book_id) or "Unknown"
 
-            if not hc_id:
+            if not hc_slug:
+                not_linked.append(title)
+                continue
+
+            # Resolve slug to book object for API calls
+            hc_book = resolve_hardcover_book(api, hc_slug)
+            if not hc_book:
                 not_linked.append(title)
                 continue
 
             try:
                 # Check if book is already in user's library
-                user_book = api.get_user_book(hc_id)
+                user_book = api.get_user_book(hc_book.id)
 
                 if user_book:
                     # Update existing
                     api.update_user_book(user_book.id, status_id=status_id)
                 else:
                     # Add to library with this status
-                    api.add_book_to_library(book_id=hc_id, status_id=status_id)
+                    api.add_book_to_library(book_id=hc_book.id, status_id=status_id)
 
                 # Update Calibre column if mapped
                 self._update_calibre_status(db, book_id, status_id)
@@ -268,7 +274,7 @@ class HardcoverSyncAction(InterfaceAction):
         """Remove selected books from Hardcover library."""
         from calibre.gui2 import error_dialog, info_dialog, question_dialog
 
-        from .matcher import get_hardcover_id
+        from .matcher import get_hardcover_slug, resolve_hardcover_book
 
         book_ids = self.get_selected_book_ids()
         if not book_ids:
@@ -283,9 +289,12 @@ class HardcoverSyncAction(InterfaceAction):
         # Find books that are linked and in library
         to_remove = []
         for book_id in book_ids:
-            hc_id = get_hardcover_id(db, book_id)
-            if hc_id:
-                user_book = api.get_user_book(hc_id)
+            hc_slug = get_hardcover_slug(db, book_id)
+            if hc_slug:
+                book = resolve_hardcover_book(api, hc_slug)
+                if not book:
+                    continue
+                user_book = api.get_user_book(book.id)
                 if user_book:
                     title = db.field_for("title", book_id) or "Unknown"
                     to_remove.append((book_id, user_book.id, title))
@@ -444,13 +453,13 @@ class HardcoverSyncAction(InterfaceAction):
         if not book_ids:
             return self._show_no_selection_error()
 
-        # Get the Hardcover ID from the first selected book
+        # Get the Hardcover slug from the first selected book
         db = self.gui.current_db.new_api
         book_id = book_ids[0]
         identifiers = db.field_for("identifiers", book_id)
-        hardcover_id = identifiers.get("hardcover")
+        hardcover_slug = identifiers.get("hardcover")
 
-        if not hardcover_id:
+        if not hardcover_slug:
             from calibre.gui2 import error_dialog
 
             error_dialog(
@@ -461,7 +470,7 @@ class HardcoverSyncAction(InterfaceAction):
             )
             return
 
-        url = f"https://hardcover.app/books/{hardcover_id}"
+        url = f"https://hardcover.app/books/{hardcover_slug}"
         open_url(QUrl(url))
 
     def remove_hardcover_link(self):
@@ -501,10 +510,10 @@ class HardcoverSyncAction(InterfaceAction):
             return
 
         # Remove links
-        from .matcher import remove_hardcover_id
+        from .matcher import remove_hardcover_link
 
         for bid in linked_ids:
-            remove_hardcover_id(db, bid)
+            remove_hardcover_link(db, bid)
 
         info_dialog(
             self.gui,

@@ -104,6 +104,30 @@ query BookById($id: Int!) {
 }
 """
 
+BOOK_BY_SLUG_QUERY = """
+query BookBySlug($slug: String!) {
+    books(where: {slug: {_eq: $slug}}) {
+        id
+        title
+        slug
+        release_date
+        contributions {
+            author {
+                id
+                name
+            }
+        }
+        editions {
+            id
+            isbn_13
+            isbn_10
+            title
+            pages
+        }
+    }
+}
+"""
+
 # =============================================================================
 # User Library Queries
 # =============================================================================
@@ -186,12 +210,12 @@ query UserBookByBookId($user_id: Int!, $book_id: Int!) {
 }
 """
 
-USER_BOOKS_BY_BOOK_IDS_QUERY = """
-query UserBooksByBookIds($user_id: Int!, $book_ids: [Int!]!) {
+USER_BOOKS_BY_SLUGS_QUERY = """
+query UserBooksBySlugs($user_id: Int!, $slugs: [String!]!) {
     user_books(
         where: {
             user_id: {_eq: $user_id},
-            book_id: {_in: $book_ids}
+            book: {slug: {_in: $slugs}}
         },
         order_by: {updated_at: desc}
     ) {

@@ -38,6 +38,7 @@ class SyncChange:
     new_value: str | None  # Display value (e.g., stars for rating)
     raw_value: str | None = None  # Raw value for applying (if different from display)
     apply: bool = True  # Whether to apply this change
+    hardcover_slug: str | None = None  # Slug for identifier storage
 
     @property
     def api_value(self) -> str | None:
@@ -81,6 +82,7 @@ class NewBookAction:
     isbn: str | None = None
     release_date: str | None = None
     apply: bool = True
+    hardcover_slug: str | None = None  # Slug for identifier storage
 
     @property
     def author_string(self) -> str:
@@ -250,7 +252,7 @@ def extract_date(date_str: str | None) -> str | None:
 
 def find_sync_from_changes(
     hardcover_books: list[UserBook],
-    hc_to_calibre: dict[int, int],
+    hc_to_calibre: dict[str, int],
     get_calibre_value: Callable[[int, str], Any],
     get_calibre_title: Callable[[int], str],
     prefs: dict,
@@ -261,7 +263,7 @@ def find_sync_from_changes(
 
     Args:
         hardcover_books: List of UserBook objects from Hardcover.
-        hc_to_calibre: Mapping of Hardcover book ID -> Calibre book ID.
+        hc_to_calibre: Mapping of Hardcover book slug -> Calibre book ID.
         get_calibre_value: Function(calibre_id, column) -> value.
         get_calibre_title: Function(calibre_id) -> title string.
         prefs: Plugin preferences dict.
@@ -292,7 +294,8 @@ def find_sync_from_changes(
     status_mappings = prefs.get("status_mappings", {})
 
     for hc_book in hardcover_books:
-        calibre_id = hc_to_calibre.get(hc_book.book_id)
+        hc_slug = hc_book.book.slug if hc_book.book else None
+        calibre_id = hc_to_calibre.get(hc_slug) if hc_slug else None
         if not calibre_id:
             continue
 
@@ -455,7 +458,7 @@ def find_sync_from_changes(
 
 def find_new_books(
     hardcover_books: list[UserBook],
-    hc_to_calibre: dict[int, int],
+    hc_to_calibre: dict[str, int],
     sync_statuses: list[int] | None = None,
 ) -> list[NewBookAction]:
     """
@@ -463,7 +466,7 @@ def find_new_books(
 
     Args:
         hardcover_books: List of UserBook objects from Hardcover.
-        hc_to_calibre: Mapping of Hardcover book ID -> Calibre book ID.
+        hc_to_calibre: Mapping of Hardcover book slug -> Calibre book ID.
         sync_statuses: List of status IDs to include (empty/None = all).
 
     Returns:
@@ -472,12 +475,13 @@ def find_new_books(
     new_books = []
 
     for hc_book in hardcover_books:
-        # Skip books that are already linked to Calibre
-        if hc_book.book_id in hc_to_calibre:
+        # Skip books without book metadata
+        if not hc_book.book:
             continue
 
-        # Skip if no book metadata
-        if not hc_book.book:
+        # Skip books that are already linked to Calibre
+        hc_slug = hc_book.book.slug
+        if hc_slug and hc_slug in hc_to_calibre:
             continue
 
         # Skip if status is not in the sync filter (when filter is set)
@@ -508,6 +512,7 @@ def find_new_books(
         new_books.append(
             NewBookAction(
                 hardcover_book_id=hc_book.book_id,
+                hardcover_slug=hc_book.book.slug,
                 title=title,
                 authors=authors,
                 user_book=hc_book,

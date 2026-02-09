@@ -345,16 +345,20 @@ class SyncFromHardcoverDialog(QDialog):
                 # Build the full map so we correctly identify which books are new
                 full_hc_to_calibre = self._build_full_hardcover_to_calibre_map()
             elif is_scoped and hc_to_calibre:
-                # Targeted fetch: only request the specific books from the API
-                hc_book_ids = list(hc_to_calibre.keys())
-                self.hardcover_books = self._fetch_books_by_ids(api, hc_book_ids)
+                # Targeted fetch: only request the specific books by slug
+                hc_slugs = list(hc_to_calibre.keys())
+                self.hardcover_books = self._fetch_books_by_slugs(api, hc_slugs)
                 full_hc_to_calibre = hc_to_calibre
             else:
                 # Full library fetch
                 self.hardcover_books = self._fetch_all_books(api)
                 full_hc_to_calibre = hc_to_calibre
 
-            matched_count = sum(1 for hb in self.hardcover_books if hb.book_id in hc_to_calibre)
+            matched_count = sum(
+                1
+                for hb in self.hardcover_books
+                if (hb.book.slug if hb.book else None) in hc_to_calibre
+            )
 
             self.status_label.setText(
                 f"Fetched {len(self.hardcover_books)} books from Hardcover. "
@@ -441,11 +445,11 @@ class SyncFromHardcoverDialog(QDialog):
 
         return all_books
 
-    def _fetch_books_by_ids(self, api: HardcoverAPI, hc_book_ids: list[int]) -> list[UserBook]:
-        """Fetch specific books from the user's Hardcover library by book IDs."""
-        return api.get_user_books_by_book_ids(hc_book_ids)
+    def _fetch_books_by_slugs(self, api: HardcoverAPI, slugs: list[str]) -> list[UserBook]:
+        """Fetch specific books from the user's Hardcover library by slugs."""
+        return api.get_user_books_by_slugs(slugs)
 
-    def _find_changes(self, hc_to_calibre: dict[int, int] | None = None) -> list[SyncChange]:
+    def _find_changes(self, hc_to_calibre: dict[str, int] | None = None) -> list[SyncChange]:
         """Find all changes between Hardcover and Calibre."""
         if hc_to_calibre is None:
             hc_to_calibre = self._build_hardcover_to_calibre_map()
@@ -459,7 +463,7 @@ class SyncFromHardcoverDialog(QDialog):
             get_column_metadata=self._get_custom_column_metadata,
         )
 
-    def _find_new_books(self, hc_to_calibre: dict[int, int]) -> list[NewBookAction]:
+    def _find_new_books(self, hc_to_calibre: dict[str, int]) -> list[NewBookAction]:
         """Find Hardcover books that aren't in Calibre yet."""
         sync_statuses = self.prefs.get("sync_statuses", [])
         new_books = find_new_books(
@@ -471,8 +475,8 @@ class SyncFromHardcoverDialog(QDialog):
         new_books.sort(key=lambda x: x.title.lower())
         return new_books
 
-    def _build_hardcover_to_calibre_map(self) -> dict[int, int]:
-        """Build a map from Hardcover book ID to Calibre book ID.
+    def _build_hardcover_to_calibre_map(self) -> dict[str, int]:
+        """Build a map from Hardcover slug to Calibre book ID.
 
         When scoped to selected books, only those books are included.
         """
@@ -487,15 +491,12 @@ class SyncFromHardcoverDialog(QDialog):
             identifiers = self.db.field_for("identifiers", book_id) or {}
             hc_id = identifiers.get("hardcover")
             if hc_id:
-                try:
-                    hc_to_calibre[int(hc_id)] = book_id
-                except (ValueError, TypeError):
-                    pass
+                hc_to_calibre[hc_id] = book_id
 
         return hc_to_calibre
 
-    def _build_full_hardcover_to_calibre_map(self) -> dict[int, int]:
-        """Build a map from Hardcover book ID to Calibre book ID for the entire library.
+    def _build_full_hardcover_to_calibre_map(self) -> dict[str, int]:
+        """Build a map from Hardcover slug to Calibre book ID for the entire library.
 
         Unlike _build_hardcover_to_calibre_map, this always covers all books
         regardless of any selection scope. Used for new-book discovery.
@@ -506,10 +507,7 @@ class SyncFromHardcoverDialog(QDialog):
             identifiers = self.db.field_for("identifiers", book_id) or {}
             hc_id = identifiers.get("hardcover")
             if hc_id:
-                try:
-                    hc_to_calibre[int(hc_id)] = book_id
-                except (ValueError, TypeError):
-                    pass
+                hc_to_calibre[hc_id] = book_id
 
         return hc_to_calibre
 
@@ -960,8 +958,10 @@ class SyncFromHardcoverDialog(QDialog):
         else:
             mi.authors = ["Unknown"]
 
-        # Set identifiers - link to Hardcover
-        mi.set_identifiers({"hardcover": str(new_book.hardcover_book_id)})
+        # Set identifiers - link to Hardcover (prefer slug, fall back to numeric ID)
+        mi.set_identifiers(
+            {"hardcover": new_book.hardcover_slug or str(new_book.hardcover_book_id)}
+        )
 
         # Set ISBN if available
         if new_book.isbn:
@@ -993,9 +993,11 @@ class SyncFromHardcoverDialog(QDialog):
 
         # Explicitly set the hardcover identifier (create_book_entry may not persist it)
         if book_id:
-            from ..matcher import set_hardcover_id
+            from ..matcher import set_hardcover_slug
 
-            set_hardcover_id(self.db, book_id, new_book.hardcover_book_id)
+            set_hardcover_slug(
+                self.db, book_id, new_book.hardcover_slug or str(new_book.hardcover_book_id)
+            )
 
             # Apply all Hardcover user data to the new book
             self._apply_user_book_data(book_id, new_book.user_book)

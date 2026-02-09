@@ -338,6 +338,24 @@ class HardcoverAPI:
 
         return Book.from_dict(books[0])
 
+    def get_book_by_slug(self, slug: str) -> Book | None:
+        """
+        Get a book by its Hardcover slug.
+
+        Args:
+            slug: The Hardcover book slug (e.g. "the-hobbit").
+
+        Returns:
+            Book object if found, None otherwise.
+        """
+        result = self._execute(queries.BOOK_BY_SLUG_QUERY, {"slug": slug})
+        books = result.get("books", [])
+
+        if not books:
+            return None
+
+        return Book.from_dict(books[0])
+
     # =========================================================================
     # User Library Methods
     # =========================================================================
@@ -395,16 +413,16 @@ class HardcoverAPI:
 
         return UserBook.from_dict(user_books[0])
 
-    def get_user_books_by_book_ids(
-        self, book_ids: list[int], user_id: int | None = None
+    def get_user_books_by_slugs(
+        self, slugs: list[str], user_id: int | None = None
     ) -> list[UserBook]:
         """
-        Get user books for a list of Hardcover book IDs.
+        Get user books for a list of Hardcover book slugs.
 
         Fetches in batches to avoid query size limits.
 
         Args:
-            book_ids: List of Hardcover book IDs.
+            slugs: List of Hardcover book slugs.
             user_id: The user ID (defaults to current user).
 
         Returns:
@@ -418,11 +436,11 @@ class HardcoverAPI:
         all_user_books = []
         batch_size = 100
 
-        for i in range(0, len(book_ids), batch_size):
-            batch = book_ids[i : i + batch_size]
+        for i in range(0, len(slugs), batch_size):
+            batch = slugs[i : i + batch_size]
             result = self._execute(
-                queries.USER_BOOKS_BY_BOOK_IDS_QUERY,
-                {"user_id": user_id, "book_ids": batch},
+                queries.USER_BOOKS_BY_SLUGS_QUERY,
+                {"user_id": user_id, "slugs": batch},
             )
             all_user_books.extend(UserBook.from_dict(ub) for ub in result.get("user_books", []))
 

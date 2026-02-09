@@ -378,6 +378,7 @@ class TestFindSyncFromChanges:
         status_id: int = 3,
         rating: float = None,
         review: str = None,
+        slug: str = "test-book",
     ) -> UserBook:
         """Helper to create a UserBook for testing."""
         return UserBook(
@@ -386,12 +387,13 @@ class TestFindSyncFromChanges:
             status_id=status_id,
             rating=rating,
             review=review,
+            book=Book(id=book_id, title="Test Book", slug=slug),
         )
 
     def test_status_change(self):
         """Test detecting status changes."""
         hc_books = [self.create_user_book(100, status_id=3)]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             return "Want to Read" if col == "status_col" else None
@@ -411,7 +413,7 @@ class TestFindSyncFromChanges:
     def test_rating_change(self):
         """Test detecting rating changes."""
         hc_books = [self.create_user_book(100, rating=4.5)]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             return 6 if col == "rating" else None
@@ -434,7 +436,7 @@ class TestFindSyncFromChanges:
     def test_review_change(self):
         """Test detecting review changes."""
         hc_books = [self.create_user_book(100, review="Great book!")]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             return None
@@ -457,7 +459,7 @@ class TestFindSyncFromChanges:
     def test_no_changes_when_synced(self):
         """Test no changes when already synced."""
         hc_books = [self.create_user_book(100, status_id=3)]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             return "Read"
@@ -534,7 +536,7 @@ class TestFindNewBooks:
     def test_skip_linked_book(self):
         """Test that linked books are skipped."""
         hc_books = [self.create_user_book_with_book(100)]
-        hc_to_calibre = {100: 1}  # Already linked
+        hc_to_calibre = {"test-book": 1}  # Already linked
 
         new_books = find_new_books(hc_books, hc_to_calibre)
 
@@ -680,6 +682,7 @@ class TestFindSyncFromChangesProgress:
         progress: float = None,
         started_at: str = None,
         finished_at: str = None,
+        slug: str = "test-book",
     ) -> UserBook:
         """Helper to create a UserBook with reads for testing."""
         from hardcover_sync.models import UserBookRead
@@ -701,12 +704,13 @@ class TestFindSyncFromChangesProgress:
             book_id=book_id,
             status_id=2,  # Currently reading
             reads=reads if reads else None,
+            book=Book(id=book_id, title="Test Book", slug=slug),
         )
 
     def test_progress_pages_change(self):
         """Test detecting progress pages changes."""
         hc_books = [self.create_user_book_with_reads(100, progress_pages=150)]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             if col == "progress_col":
@@ -732,7 +736,7 @@ class TestFindSyncFromChangesProgress:
     def test_progress_percent_change(self):
         """Test detecting progress percent changes."""
         hc_books = [self.create_user_book_with_reads(100, progress=0.75)]  # 75%
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             if col == "progress_pct_col":
@@ -758,7 +762,7 @@ class TestFindSyncFromChangesProgress:
     def test_progress_percent_empty_to_value(self):
         """Test progress percent change from empty to value."""
         hc_books = [self.create_user_book_with_reads(100, progress=0.25)]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             return None  # No current value
@@ -788,6 +792,7 @@ class TestFindSyncFromChangesDates:
         book_id: int,
         started_at: str = None,
         finished_at: str = None,
+        slug: str = "test-book",
     ) -> UserBook:
         """Helper to create a UserBook with reads for testing."""
         from hardcover_sync.models import UserBookRead
@@ -807,12 +812,13 @@ class TestFindSyncFromChangesDates:
             book_id=book_id,
             status_id=3,
             reads=reads if reads else None,
+            book=Book(id=book_id, title="Test Book", slug=slug),
         )
 
     def test_date_started_change(self):
         """Test detecting date started changes."""
         hc_books = [self.create_user_book_with_reads(100, started_at="2024-03-15T10:00:00")]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             if col == "date_started_col":
@@ -838,7 +844,7 @@ class TestFindSyncFromChangesDates:
     def test_date_read_change(self):
         """Test detecting date read changes."""
         hc_books = [self.create_user_book_with_reads(100, finished_at="2024-06-20")]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             if col == "date_read_col":
@@ -864,7 +870,7 @@ class TestFindSyncFromChangesDates:
     def test_date_started_empty_to_value(self):
         """Test date started change from empty to value."""
         hc_books = [self.create_user_book_with_reads(100, started_at="2024-03-15")]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             return None  # No current value
@@ -888,7 +894,7 @@ class TestFindSyncFromChangesDates:
     def test_date_read_empty_to_value(self):
         """Test date read change from empty to value."""
         hc_books = [self.create_user_book_with_reads(100, finished_at="2024-06-20")]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             return None
@@ -919,6 +925,7 @@ class TestFindSyncFromChangesIsRead:
         status_id: int = 3,
         started_at: str = None,
         finished_at: str = None,
+        slug: str = "test-book",
     ) -> UserBook:
         """Helper to create a UserBook with reads for testing."""
         from hardcover_sync.models import UserBookRead
@@ -938,12 +945,13 @@ class TestFindSyncFromChangesIsRead:
             book_id=book_id,
             status_id=status_id,
             reads=reads if reads else None,
+            book=Book(id=book_id, title="Test Book", slug=slug),
         )
 
     def test_is_read_true_when_status_is_read(self):
         """Test is_read becomes True when book status is 'Read' (status_id=3)."""
         hc_books = [self.create_user_book_with_reads(100, status_id=3)]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             if col == "is_read_col":
@@ -970,7 +978,7 @@ class TestFindSyncFromChangesIsRead:
         """Test is_read becomes False when book status is not 'Read'."""
         # Book with status "Currently Reading" (status_id=2)
         hc_books = [self.create_user_book_with_reads(100, status_id=2, started_at="2024-03-15")]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             if col == "is_read_col":
@@ -995,7 +1003,7 @@ class TestFindSyncFromChangesIsRead:
     def test_is_read_no_change_when_already_correct(self):
         """Test no change when is_read already matches status."""
         hc_books = [self.create_user_book_with_reads(100, status_id=3, finished_at="2024-06-20")]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             if col == "is_read_col":
@@ -1018,7 +1026,7 @@ class TestFindSyncFromChangesIsRead:
     def test_is_read_change_from_none_to_true(self):
         """Test is_read change when column is None (unset) and book status is Read."""
         hc_books = [self.create_user_book_with_reads(100, status_id=3, finished_at="2024-06-20")]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             return None  # No current value
@@ -1041,7 +1049,7 @@ class TestFindSyncFromChangesIsRead:
     def test_is_read_not_synced_when_column_not_configured(self):
         """Test is_read is not synced when column is not configured."""
         hc_books = [self.create_user_book_with_reads(100, status_id=3, finished_at="2024-06-20")]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             return None
@@ -1062,7 +1070,7 @@ class TestFindSyncFromChangesIsRead:
     def test_is_read_synced_even_when_sync_dates_disabled(self):
         """Test is_read is synced regardless of sync_dates setting (it's status-based, not date-based)."""
         hc_books = [self.create_user_book_with_reads(100, status_id=3, finished_at="2024-06-20")]
-        hc_to_calibre = {100: 1}
+        hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
             if col == "is_read_col":

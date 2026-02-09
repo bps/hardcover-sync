@@ -70,24 +70,24 @@ def get_calibre_book_isbn(db, book_id: int) -> str | None:
     return None
 
 
-def get_hardcover_id(db, book_id: int) -> int | None:
+def get_hardcover_slug(db, book_id: int) -> str | None:
     """
-    Get the Hardcover ID for a Calibre book.
+    Get the Hardcover slug for a Calibre book.
+
+    The identifier is stored as ``hardcover:<slug>`` (e.g. ``hardcover:the-hobbit``).
+    Legacy numeric IDs (e.g. ``hardcover:12345``) are also accepted.
 
     Args:
         db: Calibre database API.
         book_id: The Calibre book ID.
 
     Returns:
-        Hardcover book ID if linked, None otherwise.
+        Hardcover slug (or legacy numeric ID string) if linked, None otherwise.
     """
     identifiers = get_calibre_book_identifiers(db, book_id)
-    hc_id = identifiers.get("hardcover")
-    if hc_id:
-        try:
-            return int(hc_id)
-        except ValueError:
-            pass
+    hc_val = identifiers.get("hardcover")
+    if hc_val:
+        return hc_val
     return None
 
 
@@ -112,23 +112,53 @@ def get_hardcover_edition_id(db, book_id: int) -> int | None:
     return None
 
 
-def set_hardcover_id(
+def resolve_hardcover_book(api: HardcoverAPI, slug_or_id: str) -> Book | None:
+    """
+    Resolve a Hardcover identifier (slug or legacy numeric ID) to a Book.
+
+    Tries slug-based lookup first, then falls back to numeric ID lookup
+    for backward compatibility.
+
+    Args:
+        api: HardcoverAPI instance.
+        slug_or_id: The identifier value from Calibre (slug or legacy numeric ID).
+
+    Returns:
+        Book object if found, None otherwise.
+    """
+    # Try slug-based lookup first
+    book = api.get_book_by_slug(slug_or_id)
+    if book:
+        return book
+
+    # Backward compat: might be a legacy numeric ID
+    try:
+        book = api.get_book_by_id(int(slug_or_id))
+        if book:
+            return book
+    except (ValueError, TypeError):
+        pass
+
+    return None
+
+
+def set_hardcover_slug(
     db,
     book_id: int,
-    hardcover_id: int,
+    slug: str,
     edition_id: int | None = None,
 ):
     """
-    Set the Hardcover ID for a Calibre book.
+    Set the Hardcover slug for a Calibre book.
 
     Args:
         db: Calibre database API.
         book_id: The Calibre book ID.
-        hardcover_id: The Hardcover book ID.
+        slug: The Hardcover book slug (e.g. "the-hobbit").
         edition_id: Optional Hardcover edition ID.
     """
     identifiers = get_calibre_book_identifiers(db, book_id)
-    identifiers["hardcover"] = str(hardcover_id)
+    identifiers["hardcover"] = slug
 
     if edition_id is not None:
         identifiers["hardcover-edition"] = str(edition_id)
@@ -138,9 +168,9 @@ def set_hardcover_id(
     db.set_field("identifiers", {book_id: identifiers})
 
 
-def remove_hardcover_id(db, book_id: int):
+def remove_hardcover_link(db, book_id: int):
     """
-    Remove the Hardcover ID from a Calibre book.
+    Remove the Hardcover identifiers from a Calibre book.
 
     Args:
         db: Calibre database API.
@@ -344,9 +374,9 @@ def match_calibre_book(
         MatchResult with the best match found.
     """
     # Check if already linked
-    hc_id = get_hardcover_id(db, book_id)
-    if hc_id:
-        book = api.get_book_by_id(hc_id)
+    hc_slug = get_hardcover_slug(db, book_id)
+    if hc_slug:
+        book = resolve_hardcover_book(api, hc_slug)
         if book:
             return MatchResult(
                 book=book,

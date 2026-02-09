@@ -37,8 +37,9 @@ class AddToListDialog(HardcoverDialogBase):
         super().__init__(parent, plugin_action, book_ids)
         self.lists: list[HardcoverList] = []
 
-        # Get book info
-        self.book_info = self._get_book_info()
+        # Get book info (resolve slugs via API)
+        api = self._get_api()
+        self.book_info = self._get_book_info(api)
 
         self.setWindowTitle("Add to Hardcover List")
         self.setMinimumWidth(400)

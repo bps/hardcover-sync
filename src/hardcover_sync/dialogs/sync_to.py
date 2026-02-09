@@ -283,11 +283,13 @@ class SyncToHardcoverDialog(QDialog):
                 not_linked_count += 1
                 continue
 
-            try:
-                hc_book_id = int(hc_id_str)
-            except (ValueError, TypeError):
+            from ..matcher import resolve_hardcover_book
+
+            hc_book = resolve_hardcover_book(api, hc_id_str)
+            if not hc_book:
                 not_linked_count += 1
                 continue
+            hc_book_id = hc_book.id
 
             linked_count += 1
             calibre_title = self.db.field_for("title", book_id) or "Unknown"

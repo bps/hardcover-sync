@@ -48,8 +48,9 @@ class RemoveFromListDialog(HardcoverDialogBase):
         super().__init__(parent, plugin_action, book_ids)
         self.list_memberships: dict[int, list[ListBookInfo]] = {}  # list_id -> list of memberships
 
-        # Get book info
-        self.book_info = self._get_book_info()
+        # Get book info (resolve slugs via API)
+        api = self._get_api()
+        self.book_info = self._get_book_info(api)
 
         self.setWindowTitle("Remove from Hardcover List")
         self.setMinimumWidth(400)

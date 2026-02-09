@@ -27,7 +27,7 @@ from qt.core import (
 
 from ..api import HardcoverAPI
 from ..config import get_plugin_prefs
-from ..matcher import MatchResult, search_for_calibre_book, set_hardcover_id
+from ..matcher import MatchResult, search_for_calibre_book, set_hardcover_slug
 from ..models import Book
 
 
@@ -37,6 +37,7 @@ class PendingLink:
 
     calibre_book_id: int
     hardcover_book_id: int
+    hardcover_slug: str
     edition_id: int | None
     auto: bool
 
@@ -267,6 +268,7 @@ class LinkBookDialog(QDialog):
             PendingLink(
                 calibre_book_id=book_id,
                 hardcover_book_id=book.id,
+                hardcover_slug=book.slug or str(book.id),
                 edition_id=edition_id,
                 auto=True,
             )
@@ -382,6 +384,7 @@ class LinkBookDialog(QDialog):
             PendingLink(
                 calibre_book_id=book_id,
                 hardcover_book_id=self.selected_book.id,
+                hardcover_slug=self.selected_book.slug or str(self.selected_book.id),
                 edition_id=edition_id,
                 auto=False,
             )
@@ -406,7 +409,7 @@ class LinkBookDialog(QDialog):
     def _finish(self):
         """Commit all pending links and accept the dialog."""
         for link in self.pending_links:
-            set_hardcover_id(self.db, link.calibre_book_id, link.hardcover_book_id, link.edition_id)
+            set_hardcover_slug(self.db, link.calibre_book_id, link.hardcover_slug, link.edition_id)
         self.accept()
 
     def _advance(self) -> bool:
