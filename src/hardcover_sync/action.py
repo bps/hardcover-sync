@@ -339,7 +339,8 @@ class HardcoverSyncAction(InterfaceAction):
         """Sync data from Hardcover to Calibre."""
         from .dialogs.sync_from import SyncFromHardcoverDialog
 
-        dialog = SyncFromHardcoverDialog(self.gui, self)
+        book_ids = self.get_selected_book_ids()
+        dialog = SyncFromHardcoverDialog(self.gui, self, book_ids=book_ids)
         dialog.exec_()
 
     def sync_to_hardcover(self):

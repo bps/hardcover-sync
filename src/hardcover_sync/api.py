@@ -395,6 +395,39 @@ class HardcoverAPI:
 
         return UserBook.from_dict(user_books[0])
 
+    def get_user_books_by_book_ids(
+        self, book_ids: list[int], user_id: int | None = None
+    ) -> list[UserBook]:
+        """
+        Get user books for a list of Hardcover book IDs.
+
+        Fetches in batches to avoid query size limits.
+
+        Args:
+            book_ids: List of Hardcover book IDs.
+            user_id: The user ID (defaults to current user).
+
+        Returns:
+            List of UserBook objects for the matching books.
+        """
+        if user_id is None:
+            if self._user is None:
+                self.get_me()
+            user_id = self._user.id
+
+        all_user_books = []
+        batch_size = 100
+
+        for i in range(0, len(book_ids), batch_size):
+            batch = book_ids[i : i + batch_size]
+            result = self._execute(
+                queries.USER_BOOKS_BY_BOOK_IDS_QUERY,
+                {"user_id": user_id, "book_ids": batch},
+            )
+            all_user_books.extend(UserBook.from_dict(ub) for ub in result.get("user_books", []))
+
+        return all_user_books
+
     def add_book_to_library(
         self,
         book_id: int,

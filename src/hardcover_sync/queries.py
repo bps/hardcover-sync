@@ -186,6 +186,55 @@ query UserBookByBookId($user_id: Int!, $book_id: Int!) {
 }
 """
 
+USER_BOOKS_BY_BOOK_IDS_QUERY = """
+query UserBooksByBookIds($user_id: Int!, $book_ids: [Int!]!) {
+    user_books(
+        where: {
+            user_id: {_eq: $user_id},
+            book_id: {_in: $book_ids}
+        },
+        order_by: {updated_at: desc}
+    ) {
+        id
+        book_id
+        edition_id
+        status_id
+        rating
+        review_raw
+        created_at
+        updated_at
+        book {
+            id
+            title
+            slug
+            release_date
+            contributions {
+                author {
+                    id
+                    name
+                }
+            }
+        }
+        edition {
+            id
+            isbn_13
+            isbn_10
+            title
+            pages
+        }
+        user_book_reads(order_by: {started_at: desc}) {
+            id
+            started_at
+            finished_at
+            paused_at
+            progress
+            progress_pages
+            edition_id
+        }
+    }
+}
+"""
+
 # =============================================================================
 # User Library Mutations
 # =============================================================================

@@ -42,13 +42,15 @@ class SyncFromHardcoverDialog(QDialog):
     Shows a preview of changes and allows the user to select which to apply.
     """
 
-    def __init__(self, parent, plugin_action):
+    def __init__(self, parent, plugin_action, book_ids: list[int] | None = None):
         """
         Initialize the dialog.
 
         Args:
             parent: Parent widget.
             plugin_action: The plugin's InterfaceAction (provides access to GUI/database).
+            book_ids: Optional list of selected Calibre book IDs. If provided and not
+                all books are selected, only these books will be synced.
         """
         super().__init__(parent)
         self.plugin_action = plugin_action
@@ -58,6 +60,13 @@ class SyncFromHardcoverDialog(QDialog):
         self.changes: list[SyncChange] = []
         self.new_books: list[NewBookAction] = []
         self.hardcover_books: list[UserBook] = []
+
+        # Determine sync scope: if a subset of books is selected, scope to those
+        all_book_ids = self.db.all_book_ids()
+        if book_ids and len(book_ids) < len(all_book_ids):
+            self.scoped_book_ids: list[int] | None = book_ids
+        else:
+            self.scoped_book_ids = None
 
         self.setWindowTitle("Sync from Hardcover")
         self.setMinimumWidth(800)
@@ -94,16 +103,24 @@ class SyncFromHardcoverDialog(QDialog):
 
         # Fetch button and options
         fetch_layout = QHBoxLayout()
-        self.fetch_button = QPushButton("Fetch Library")
+        if self.scoped_book_ids is not None:
+            self.fetch_button = QPushButton("Fetch Selected")
+        else:
+            self.fetch_button = QPushButton("Fetch Library")
         self.fetch_button.clicked.connect(self._on_fetch)
         fetch_layout.addWidget(self.fetch_button)
 
-        # Checkbox to create new books
+        # Checkbox to create new books (only for full-library sync)
         self.create_books_checkbox = QCheckBox("Add books not in Calibre")
         self.create_books_checkbox.setToolTip(
             "Create new Calibre entries for Hardcover books that aren't in your library yet"
         )
         self.create_books_checkbox.setChecked(False)
+        if self.scoped_book_ids is not None:
+            self.create_books_checkbox.setEnabled(False)
+            self.create_books_checkbox.setToolTip(
+                "Only available when syncing entire library (select all books or no books)"
+            )
         fetch_layout.addWidget(self.create_books_checkbox)
 
         fetch_layout.addStretch()
@@ -177,25 +194,36 @@ class SyncFromHardcoverDialog(QDialog):
 
     def _update_diagnostics(self):
         """Update the diagnostics panel with current status."""
-        # Count linked books
+        # Count linked books in scope
         linked_count = 0
-        total_count = len(self.db.all_book_ids())
 
-        for book_id in self.db.all_book_ids():
+        if self.scoped_book_ids is not None:
+            scope_ids = self.scoped_book_ids
+        else:
+            scope_ids = list(self.db.all_book_ids())
+
+        total_count = len(scope_ids)
+
+        for book_id in scope_ids:
             identifiers = self.db.field_for("identifiers", book_id) or {}
             if identifiers.get("hardcover"):
                 linked_count += 1
 
+        # Scope label
+        if self.scoped_book_ids is not None:
+            scope_text = f"<b>Scope:</b> {total_count} selected book(s)"
+        else:
+            scope_text = f"<b>Scope:</b> All books in library ({total_count})"
+
         if linked_count == 0:
             self.library_status_label.setText(
-                f"<b>Library:</b> {total_count} books in Calibre, "
+                f"{scope_text}, "
                 f"<span style='color: red;'><b>0 linked to Hardcover</b></span><br>"
                 "<i>Use 'Link to Hardcover...' to connect books first.</i>"
             )
         else:
             self.library_status_label.setText(
-                f"<b>Library:</b> {total_count} books in Calibre, "
-                f"<b>{linked_count} linked to Hardcover</b>"
+                f"{scope_text}, <b>{linked_count} linked to Hardcover</b>"
             )
 
         # Column mapping status - all fields are now supported via user_book_reads
@@ -249,13 +277,24 @@ class SyncFromHardcoverDialog(QDialog):
             )
             self.fetch_button.setEnabled(False)
         elif linked_count == 0:
-            self.status_label.setText(
-                "No books are linked to Hardcover. Check 'Add books not in Calibre' "
-                "to import from your Hardcover library, or link existing books first."
-            )
+            if self.scoped_book_ids is not None:
+                self.status_label.setText(
+                    "No selected books are linked to Hardcover. "
+                    "Use 'Link to Hardcover...' to connect books first."
+                )
+            else:
+                self.status_label.setText(
+                    "No books are linked to Hardcover. Check 'Add books not in Calibre' "
+                    "to import from your Hardcover library, or link existing books first."
+                )
             self.fetch_button.setEnabled(True)  # Still allow fetching for new books
         else:
-            self.status_label.setText("Click 'Fetch Library' to load your Hardcover books.")
+            if self.scoped_book_ids is not None:
+                self.status_label.setText(
+                    f"Click 'Fetch Selected' to sync {linked_count} linked book(s) from Hardcover."
+                )
+            else:
+                self.status_label.setText("Click 'Fetch Library' to load your Hardcover books.")
             self.fetch_button.setEnabled(True)
 
     def _get_api(self) -> HardcoverAPI | None:
@@ -275,17 +314,27 @@ class SyncFromHardcoverDialog(QDialog):
             return
 
         self.fetch_button.setEnabled(False)
-        self.status_label.setText("Fetching your Hardcover library...")
+        is_scoped = self.scoped_book_ids is not None
+        if is_scoped:
+            self.status_label.setText("Fetching selected books from Hardcover...")
+        else:
+            self.status_label.setText("Fetching your Hardcover library...")
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminate
         QApplication.processEvents()
 
         try:
-            # Fetch all books from Hardcover
-            self.hardcover_books = self._fetch_all_books(api)
-
-            # Build the map first so we can report on it
+            # Build the map first so we know which HC book IDs to fetch
             hc_to_calibre = self._build_hardcover_to_calibre_map()
+
+            if is_scoped and hc_to_calibre:
+                # Targeted fetch: only request the specific books from the API
+                hc_book_ids = list(hc_to_calibre.keys())
+                self.hardcover_books = self._fetch_books_by_ids(api, hc_book_ids)
+            else:
+                # Full library fetch
+                self.hardcover_books = self._fetch_all_books(api)
+
             matched_count = sum(1 for hb in self.hardcover_books if hb.book_id in hc_to_calibre)
 
             self.status_label.setText(
@@ -297,9 +346,9 @@ class SyncFromHardcoverDialog(QDialog):
             # Find changes for linked books
             self.changes = self._find_changes(hc_to_calibre)
 
-            # Find new books to create (if checkbox is checked)
+            # Find new books to create (if checkbox is checked, only for full-library sync)
             self.new_books = []
-            if self.create_books_checkbox.isChecked():
+            if self.create_books_checkbox.isChecked() and not is_scoped:
                 self.new_books = self._find_new_books(hc_to_calibre)
 
             self._populate_changes_tree()
@@ -373,6 +422,10 @@ class SyncFromHardcoverDialog(QDialog):
 
         return all_books
 
+    def _fetch_books_by_ids(self, api: HardcoverAPI, hc_book_ids: list[int]) -> list[UserBook]:
+        """Fetch specific books from the user's Hardcover library by book IDs."""
+        return api.get_user_books_by_book_ids(hc_book_ids)
+
     def _find_changes(self, hc_to_calibre: dict[int, int] | None = None) -> list[SyncChange]:
         """Find all changes between Hardcover and Calibre."""
         if hc_to_calibre is None:
@@ -400,13 +453,18 @@ class SyncFromHardcoverDialog(QDialog):
         return new_books
 
     def _build_hardcover_to_calibre_map(self) -> dict[int, int]:
-        """Build a map from Hardcover book ID to Calibre book ID."""
+        """Build a map from Hardcover book ID to Calibre book ID.
+
+        When scoped to selected books, only those books are included.
+        """
         hc_to_calibre = {}
 
-        # Get all book IDs in library
-        all_book_ids = self.db.all_book_ids()
+        if self.scoped_book_ids is not None:
+            book_ids = self.scoped_book_ids
+        else:
+            book_ids = list(self.db.all_book_ids())
 
-        for book_id in all_book_ids:
+        for book_id in book_ids:
             identifiers = self.db.field_for("identifiers", book_id) or {}
             hc_id = identifiers.get("hardcover")
             if hc_id:
