@@ -390,40 +390,50 @@ class HardcoverSyncAction(InterfaceAction):
         open_url(QUrl(url))
 
     def link_to_hardcover(self):
-        """Link selected book to a Hardcover book."""
+        """Link selected books to Hardcover books."""
         from calibre.gui2 import info_dialog
 
         book_ids = self.get_selected_book_ids()
         if not book_ids:
             return self._show_no_selection_error()
 
-        # Only link one book at a time
-        book_id = book_ids[0]
         db = self.gui.current_db.new_api
 
-        # Get book info
-        title = db.field_for("title", book_id) or "Unknown"
-        authors = db.field_for("authors", book_id) or []
+        # Build list of (book_id, title, authors) for all selected books
+        books = []
+        for book_id in book_ids:
+            title = db.field_for("title", book_id) or "Unknown"
+            authors = db.field_for("authors", book_id) or []
+            books.append((book_id, title, list(authors)))
 
         # Show the link dialog
         from .dialogs.link_book import LinkBookDialog
 
-        dialog = LinkBookDialog(self.gui, db, book_id, title, authors)
-        if dialog.exec_() == dialog.Accepted:
-            selected_book = dialog.get_selected_book()
-            if selected_book:
-                # Store the Hardcover ID
-                from .matcher import set_hardcover_id
+        dialog = LinkBookDialog(self.gui, db, books)
+        if dialog.exec_() != dialog.Accepted:
+            return
 
-                edition_id = dialog.get_selected_edition_id()
-                set_hardcover_id(db, book_id, selected_book.id, edition_id)
+        linked = dialog.linked_count
+        auto_linked = dialog.auto_linked_count
+        skipped = dialog.skipped_count
 
-                info_dialog(
-                    self.gui,
-                    "Book Linked",
-                    f"'{title}' has been linked to '{selected_book.title}' on Hardcover.",
-                    show=True,
-                )
+        if linked > 0:
+            parts = []
+            if auto_linked > 0:
+                parts.append(f"{auto_linked} auto-linked")
+            manual = linked - auto_linked
+            if manual > 0:
+                parts.append(f"{manual} manually linked")
+            if skipped > 0:
+                parts.append(f"{skipped} skipped")
+            detail = ", ".join(parts)
+
+            info_dialog(
+                self.gui,
+                "Books Linked",
+                f"Linked {linked} of {len(books)} book(s) to Hardcover ({detail}).",
+                show=True,
+            )
 
     def view_on_hardcover(self):
         """Open selected book on Hardcover in browser."""

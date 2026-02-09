@@ -69,6 +69,7 @@ DEFAULT_PREFS = {
     "sync_statuses": [],  # Default: sync all statuses
     # Sync behavior
     "conflict_resolution": "ask",  # ask, hardcover, calibre, newest
+    "auto_link_exact_match": True,
     "sync_rating": True,
     "sync_progress": True,
     "sync_dates": True,
@@ -488,6 +489,21 @@ class ConfigWidget:
 
         layout.addWidget(sync_group)
 
+        # Linking options group
+        link_group = QGroupBox("Linking")
+        link_layout = QVBoxLayout(link_group)
+
+        self.auto_link_checkbox = QCheckBox("Auto-link exact matches")
+        self.auto_link_checkbox.setToolTip(
+            "When linking books, automatically accept a match if there is a single\n"
+            "result with 100% confidence (e.g. an ISBN match). Disable this if\n"
+            "auto-links are matching the wrong books."
+        )
+        self.auto_link_checkbox.setChecked(prefs.get("auto_link_exact_match", True))
+        link_layout.addWidget(self.auto_link_checkbox)
+
+        layout.addWidget(link_group)
+
         # Reading statuses to sync group
         status_filter_group = QGroupBox("Reading Statuses to Sync")
         status_filter_layout = QVBoxLayout(status_filter_group)
@@ -822,6 +838,7 @@ class ConfigWidget:
         prefs["status_mappings"] = status_mappings
 
         # Save sync options
+        prefs["auto_link_exact_match"] = self.auto_link_checkbox.isChecked()
         prefs["sync_rating"] = self.sync_rating_checkbox.isChecked()
         prefs["sync_progress"] = self.sync_progress_checkbox.isChecked()
         prefs["sync_dates"] = self.sync_dates_checkbox.isChecked()

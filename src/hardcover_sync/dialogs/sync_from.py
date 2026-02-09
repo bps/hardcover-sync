@@ -120,6 +120,7 @@ class SyncFromHardcoverDialog(QDialog):
             "When checked, a full library fetch is performed to discover unlinked books."
         )
         self.create_books_checkbox.setChecked(False)
+        self.create_books_checkbox.stateChanged.connect(self._on_add_books_toggled)
         fetch_layout.addWidget(self.create_books_checkbox)
 
         fetch_layout.addStretch()
@@ -209,10 +210,12 @@ class SyncFromHardcoverDialog(QDialog):
                 linked_count += 1
 
         # Scope label
-        if self.scoped_book_ids is not None:
+        want_new_books = self.create_books_checkbox.isChecked()
+        if self.scoped_book_ids is not None and not want_new_books:
             scope_text = f"<b>Scope:</b> {total_count} selected book(s)"
         else:
-            scope_text = f"<b>Scope:</b> All books in library ({total_count})"
+            all_count = len(list(self.db.all_book_ids()))
+            scope_text = f"<b>Scope:</b> All books in library ({all_count})"
 
         if linked_count == 0:
             self.library_status_label.setText(
@@ -296,6 +299,15 @@ class SyncFromHardcoverDialog(QDialog):
                 self.status_label.setText("Click 'Fetch Library' to load your Hardcover books.")
             self.fetch_button.setEnabled(True)
 
+    def _on_add_books_toggled(self):
+        """Update scope display and fetch button when the add-books checkbox changes."""
+        if self.scoped_book_ids is not None:
+            if self.create_books_checkbox.isChecked():
+                self.fetch_button.setText("Fetch Library")
+            else:
+                self.fetch_button.setText("Fetch Selected")
+        self._update_diagnostics()
+
     def _get_api(self) -> HardcoverAPI | None:
         """Get an API instance with the configured token."""
         token = self.prefs.get("api_token", "")
@@ -314,7 +326,8 @@ class SyncFromHardcoverDialog(QDialog):
 
         self.fetch_button.setEnabled(False)
         is_scoped = self.scoped_book_ids is not None
-        if is_scoped:
+        want_new_books = self.create_books_checkbox.isChecked()
+        if is_scoped and not want_new_books:
             self.status_label.setText("Fetching selected books from Hardcover...")
         else:
             self.status_label.setText("Fetching your Hardcover library...")
@@ -323,8 +336,6 @@ class SyncFromHardcoverDialog(QDialog):
         QApplication.processEvents()
 
         try:
-            want_new_books = self.create_books_checkbox.isChecked()
-
             # Build the map of linked books for the current scope
             hc_to_calibre = self._build_hardcover_to_calibre_map()
 
