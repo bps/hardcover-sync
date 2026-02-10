@@ -4,13 +4,19 @@ Main InterfaceAction for the Hardcover Sync plugin.
 This module defines the toolbar button and menu structure.
 """
 
+from __future__ import annotations
+
 from functools import partial
+from typing import TYPE_CHECKING, Any
 
 # Calibre imports - only available in Calibre's runtime environment
 from calibre.gui2.actions import InterfaceAction
 from qt.core import QMenu, QToolButton
 
 from .config import MENU_STATUSES, READING_STATUSES, get_plugin_prefs
+
+if TYPE_CHECKING:
+    from .api import HardcoverAPI
 
 
 class HardcoverSyncAction(InterfaceAction):
@@ -30,7 +36,7 @@ class HardcoverSyncAction(InterfaceAction):
     action_type = "current"
     dont_add_to_toolbar = False
 
-    def genesis(self):
+    def genesis(self) -> None:
         """
         Setup the plugin. Called once when Calibre starts.
         """
@@ -50,27 +56,27 @@ class HardcoverSyncAction(InterfaceAction):
         # Connect aboutToShow to rebuild menu - ensures it's always fresh
         self.menu.aboutToShow.connect(self._on_menu_about_to_show)
 
-    def initialization_complete(self):
+    def initialization_complete(self) -> None:
         """Called after GUI is fully initialized."""
         # Build the menu now that GUI is ready
         self._menu_needs_rebuild = True
         self.rebuild_menu()
 
-    def _on_menu_about_to_show(self):
+    def _on_menu_about_to_show(self) -> None:
         """Called when menu is about to be shown."""
         if self._menu_needs_rebuild:
             self.rebuild_menu()
 
-    def mark_menu_for_rebuild(self):
+    def mark_menu_for_rebuild(self) -> None:
         """Mark the menu to be rebuilt on next show."""
         self._menu_needs_rebuild = True
 
-    def library_changed(self, db):
+    def library_changed(self, db: Any) -> None:
         """Called when the library is changed."""
         # Invalidate any caches and mark menu for rebuild
         self._menu_needs_rebuild = True
 
-    def rebuild_menu(self):
+    def rebuild_menu(self) -> None:
         """Rebuild the plugin menu."""
         self._menu_needs_rebuild = False
         self.menu.clear()
@@ -137,14 +143,14 @@ class HardcoverSyncAction(InterfaceAction):
         self.menu.addAction("Customize plugin...").triggered.connect(self.show_configuration)
         self.menu.addAction("Help").triggered.connect(self.show_help)
 
-    def get_selected_books(self):
+    def get_selected_books(self) -> list[int]:
         """Get the currently selected books in the library view."""
         rows = self.gui.library_view.selectionModel().selectedRows()
         if not rows:
             return []
         return [row.row() for row in rows]
 
-    def get_selected_book_ids(self):
+    def get_selected_book_ids(self) -> list[int]:
         """Get the calibre book IDs for selected books."""
         rows = self.get_selected_books()
         if not rows:
@@ -155,10 +161,9 @@ class HardcoverSyncAction(InterfaceAction):
     # Action handlers (stubs for now)
     # -------------------------------------------------------------------------
 
-    def _get_api(self):
+    def _get_api(self) -> HardcoverAPI | None:
         """Get an API instance with the configured token."""
         from .api import HardcoverAPI
-        from .config import get_plugin_prefs
 
         prefs = get_plugin_prefs()
         token = prefs.get("api_token", "")
@@ -174,10 +179,8 @@ class HardcoverSyncAction(InterfaceAction):
             return None
         return HardcoverAPI(token=token)
 
-    def _update_calibre_status(self, db, book_id: int, status_id: int):
+    def _update_calibre_status(self, db: Any, book_id: int, status_id: int) -> None:
         """Update the Calibre status column if configured."""
-        from .config import get_plugin_prefs
-
         prefs = get_plugin_prefs()
         status_column = prefs.get("status_column")
 
@@ -193,7 +196,7 @@ class HardcoverSyncAction(InterfaceAction):
         except Exception:  # noqa: S110
             pass  # Column update is best-effort, don't interrupt user flow
 
-    def set_reading_status(self, status_id):
+    def set_reading_status(self, status_id: int) -> None:
         """Set the reading status for selected books on Hardcover."""
         from calibre.gui2 import error_dialog, info_dialog
 
@@ -270,7 +273,7 @@ class HardcoverSyncAction(InterfaceAction):
                 show=True,
             )
 
-    def remove_from_hardcover(self):
+    def remove_from_hardcover(self) -> None:
         """Remove selected books from Hardcover library."""
         from calibre.gui2 import error_dialog, info_dialog, question_dialog
 
@@ -333,7 +336,7 @@ class HardcoverSyncAction(InterfaceAction):
             show=True,
         )
 
-    def update_progress(self):
+    def update_progress(self) -> None:
         """Update reading progress for selected book."""
         book_ids = self.get_selected_book_ids()
         if not book_ids:
@@ -344,7 +347,7 @@ class HardcoverSyncAction(InterfaceAction):
         dialog = UpdateProgressDialog(self.gui, self, book_ids)
         dialog.exec_()
 
-    def sync_from_hardcover(self):
+    def sync_from_hardcover(self) -> None:
         """Sync data from Hardcover to Calibre."""
         from .dialogs.sync_from import SyncFromHardcoverDialog
 
@@ -352,7 +355,7 @@ class HardcoverSyncAction(InterfaceAction):
         dialog = SyncFromHardcoverDialog(self.gui, self, book_ids=book_ids)
         dialog.exec_()
 
-    def sync_to_hardcover(self):
+    def sync_to_hardcover(self) -> None:
         """Sync data from Calibre to Hardcover."""
         book_ids = self.get_selected_book_ids()
         if not book_ids:
@@ -363,7 +366,7 @@ class HardcoverSyncAction(InterfaceAction):
         dialog = SyncToHardcoverDialog(self.gui, self, book_ids)
         dialog.exec_()
 
-    def add_to_list(self):
+    def add_to_list(self) -> None:
         """Add selected books to a Hardcover list."""
         book_ids = self.get_selected_book_ids()
         if not book_ids:
@@ -374,7 +377,7 @@ class HardcoverSyncAction(InterfaceAction):
         dialog = AddToListDialog(self.gui, self, book_ids)
         dialog.exec_()
 
-    def remove_from_list(self):
+    def remove_from_list(self) -> None:
         """Remove selected books from a Hardcover list."""
         book_ids = self.get_selected_book_ids()
         if not book_ids:
@@ -385,7 +388,7 @@ class HardcoverSyncAction(InterfaceAction):
         dialog = RemoveFromListDialog(self.gui, self, book_ids)
         dialog.exec_()
 
-    def view_lists_on_hardcover(self):
+    def view_lists_on_hardcover(self) -> None:
         """Open Hardcover lists page in browser."""
         from calibre.gui2 import open_url
         from qt.core import QUrl
@@ -398,7 +401,7 @@ class HardcoverSyncAction(InterfaceAction):
             url = "https://hardcover.app"
         open_url(QUrl(url))
 
-    def link_to_hardcover(self):
+    def link_to_hardcover(self) -> None:
         """Link selected books to Hardcover books."""
         from calibre.gui2 import info_dialog
 
@@ -444,7 +447,7 @@ class HardcoverSyncAction(InterfaceAction):
                 show=True,
             )
 
-    def view_on_hardcover(self):
+    def view_on_hardcover(self) -> None:
         """Open selected book on Hardcover in browser."""
         from calibre.gui2 import open_url
         from qt.core import QUrl
@@ -473,7 +476,7 @@ class HardcoverSyncAction(InterfaceAction):
         url = f"https://hardcover.app/books/{hardcover_slug}"
         open_url(QUrl(url))
 
-    def remove_hardcover_link(self):
+    def remove_hardcover_link(self) -> None:
         """Remove Hardcover identifier from selected books."""
         from calibre.gui2 import error_dialog, info_dialog, question_dialog
 
@@ -522,20 +525,20 @@ class HardcoverSyncAction(InterfaceAction):
             show=True,
         )
 
-    def show_configuration(self):
+    def show_configuration(self) -> None:
         """Show the plugin configuration dialog."""
         if self.interface_action_base_plugin.do_user_config(self.gui, plugin_action=self):  # type: ignore[union-attr]
             # User clicked OK - mark menu for rebuild in case token was added/changed
             self.mark_menu_for_rebuild()
 
-    def show_help(self):
+    def show_help(self) -> None:
         """Show help documentation."""
         from calibre.gui2 import open_url
         from qt.core import QUrl
 
         open_url(QUrl("https://github.com/bps/hardcover-sync"))
 
-    def _show_no_selection_error(self):
+    def _show_no_selection_error(self) -> None:
         """Show error when no books are selected."""
         from calibre.gui2 import error_dialog
 
