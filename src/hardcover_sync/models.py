@@ -176,13 +176,6 @@ class UserBook:
     edition: Edition | None = None
     reads: list[UserBookRead] | None = None
 
-    # Deprecated fields - use reads instead
-    # Kept for backward compatibility but always None from API
-    progress: float | None = None
-    progress_pages: int | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
-
     @property
     def latest_read(self) -> UserBookRead | None:
         """Get the most recent reading session (first in list, sorted by started_at desc)."""
@@ -299,4 +292,23 @@ class List:
             slug=data.get("slug"),
             description=data.get("description"),
             books_count=data.get("books_count", 0),
+        )
+
+
+@dataclass
+class ListBookMembership:
+    """Represents a book's membership in a list (includes the list_book ID for removal)."""
+
+    list_book_id: int
+    list_id: int
+    list_name: str
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ListBookMembership":
+        """Create a ListBookMembership from a list_books API response entry."""
+        lst = data.get("list", {})
+        return cls(
+            list_book_id=data["id"],
+            list_id=lst["id"],
+            list_name=lst["name"],
         )

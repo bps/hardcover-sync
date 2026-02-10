@@ -19,6 +19,7 @@ from .models import (  # noqa: E402
     Book,
     Edition,
     List,
+    ListBookMembership,
     User,
     UserBook,
     UserBookRead,
@@ -165,6 +166,21 @@ class HardcoverAPI:
     def clear_dry_run_log(self):
         """Clear the dry-run log."""
         self._dry_run_log = []
+
+    def _ensure_user_id(self, user_id: int | None = None) -> int:
+        """Resolve the user ID, defaulting to the current authenticated user.
+
+        Args:
+            user_id: Explicit user ID, or None to use the current user.
+
+        Returns:
+            The resolved user ID.
+        """
+        if user_id is not None:
+            return user_id
+        if self._user is None:
+            self.get_me()
+        return self._user.id
 
     # =========================================================================
     # User Methods
@@ -374,10 +390,7 @@ class HardcoverAPI:
         Returns:
             List of UserBook objects.
         """
-        if user_id is None:
-            if self._user is None:
-                self.get_me()
-            user_id = self._user.id
+        user_id = self._ensure_user_id(user_id)
 
         result = self._execute(
             queries.USER_BOOKS_QUERY,
@@ -397,10 +410,7 @@ class HardcoverAPI:
         Returns:
             UserBook if found, None otherwise.
         """
-        if user_id is None:
-            if self._user is None:
-                self.get_me()
-            user_id = self._user.id
+        user_id = self._ensure_user_id(user_id)
 
         result = self._execute(
             queries.USER_BOOK_BY_BOOK_ID_QUERY,
@@ -428,10 +438,7 @@ class HardcoverAPI:
         Returns:
             List of UserBook objects for the matching books.
         """
-        if user_id is None:
-            if self._user is None:
-                self.get_me()
-            user_id = self._user.id
+        user_id = self._ensure_user_id(user_id)
 
         all_user_books = []
         batch_size = 100
@@ -616,6 +623,34 @@ class HardcoverAPI:
         deleted_id = result.get("delete_user_book", {}).get("id")
         return deleted_id is not None
 
+    def _build_read_input(
+        self,
+        started_at: date | str | None = None,
+        finished_at: date | str | None = None,
+        progress: float | None = None,
+        progress_pages: int | None = None,
+        edition_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Build a read input dict for insert/update user book read mutations."""
+        read_input: dict[str, Any] = {}
+
+        if started_at is not None:
+            read_input["started_at"] = (
+                str(started_at) if isinstance(started_at, date) else started_at
+            )
+        if finished_at is not None:
+            read_input["finished_at"] = (
+                str(finished_at) if isinstance(finished_at, date) else finished_at
+            )
+        if progress is not None:
+            read_input["progress"] = progress
+        if progress_pages is not None:
+            read_input["progress_pages"] = progress_pages
+        if edition_id is not None:
+            read_input["edition_id"] = edition_id
+
+        return read_input
+
     # =========================================================================
     # User Book Read Methods (Progress Tracking)
     # =========================================================================
@@ -643,22 +678,13 @@ class HardcoverAPI:
         Returns:
             The created UserBookRead.
         """
-        read_input: dict[str, Any] = {}
-
-        if started_at is not None:
-            read_input["started_at"] = (
-                str(started_at) if isinstance(started_at, date) else started_at
-            )
-        if finished_at is not None:
-            read_input["finished_at"] = (
-                str(finished_at) if isinstance(finished_at, date) else finished_at
-            )
-        if progress is not None:
-            read_input["progress"] = progress
-        if progress_pages is not None:
-            read_input["progress_pages"] = progress_pages
-        if edition_id is not None:
-            read_input["edition_id"] = edition_id
+        read_input = self._build_read_input(
+            started_at=started_at,
+            finished_at=finished_at,
+            progress=progress,
+            progress_pages=progress_pages,
+            edition_id=edition_id,
+        )
 
         result = self._execute_mutation(
             queries.INSERT_USER_BOOK_READ_MUTATION,
@@ -705,22 +731,13 @@ class HardcoverAPI:
         Returns:
             The updated UserBookRead.
         """
-        read_input: dict[str, Any] = {}
-
-        if started_at is not None:
-            read_input["started_at"] = (
-                str(started_at) if isinstance(started_at, date) else started_at
-            )
-        if finished_at is not None:
-            read_input["finished_at"] = (
-                str(finished_at) if isinstance(finished_at, date) else finished_at
-            )
-        if progress is not None:
-            read_input["progress"] = progress
-        if progress_pages is not None:
-            read_input["progress_pages"] = progress_pages
-        if edition_id is not None:
-            read_input["edition_id"] = edition_id
+        read_input = self._build_read_input(
+            started_at=started_at,
+            finished_at=finished_at,
+            progress=progress,
+            progress_pages=progress_pages,
+            edition_id=edition_id,
+        )
 
         result = self._execute_mutation(
             queries.UPDATE_USER_BOOK_READ_MUTATION,
@@ -781,10 +798,7 @@ class HardcoverAPI:
         Returns:
             List of List objects.
         """
-        if user_id is None:
-            if self._user is None:
-                self.get_me()
-            user_id = self._user.id
+        user_id = self._ensure_user_id(user_id)
 
         result = self._execute(queries.USER_LISTS_QUERY, {"user_id": user_id})
 
@@ -801,10 +815,7 @@ class HardcoverAPI:
         Returns:
             List of List objects that contain this book.
         """
-        if user_id is None:
-            if self._user is None:
-                self.get_me()
-            user_id = self._user.id
+        user_id = self._ensure_user_id(user_id)
 
         result = self._execute(
             queries.BOOK_LISTS_QUERY,
@@ -818,6 +829,33 @@ class HardcoverAPI:
                 lists.append(List.from_dict(lst))
 
         return lists
+
+    def get_book_list_memberships(
+        self, book_id: int, user_id: int | None = None
+    ) -> list[ListBookMembership]:
+        """
+        Get list membership details for a book, including list_book IDs for removal.
+
+        Args:
+            book_id: The Hardcover book ID.
+            user_id: The user ID (defaults to current user).
+
+        Returns:
+            List of ListBookMembership objects.
+        """
+        user_id = self._ensure_user_id(user_id)
+
+        result = self._execute(
+            queries.BOOK_LISTS_QUERY,
+            {"book_id": book_id, "user_id": user_id},
+        )
+
+        memberships = []
+        for lb in result.get("list_books", []):
+            if lb.get("list"):
+                memberships.append(ListBookMembership.from_dict(lb))
+
+        return memberships
 
     def add_book_to_list(self, list_id: int, book_id: int) -> int:
         """
