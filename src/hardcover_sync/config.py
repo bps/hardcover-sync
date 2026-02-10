@@ -7,6 +7,10 @@ This module provides:
 - ConfigWidget: QWidget for plugin configuration dialog
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 # Calibre imports - only available in Calibre's runtime environment
 from calibre.utils.config import JSONConfig
 
@@ -78,6 +82,9 @@ DEFAULT_PREFS = {
     # Lab / Experimental features
     "enable_lab_update_progress": False,
     "enable_lab_lists": False,
+    # Menu display options
+    "display_status_menu": True,
+    "display_sync_menu": True,
 }
 
 # Plugin configuration storage
@@ -85,7 +92,7 @@ prefs = JSONConfig("plugins/Hardcover Sync")
 prefs.defaults = DEFAULT_PREFS
 
 
-def get_plugin_prefs():
+def get_plugin_prefs() -> JSONConfig:
     """
     Get the plugin preferences.
 
@@ -95,7 +102,7 @@ def get_plugin_prefs():
     return prefs
 
 
-def get_unmapped_columns(plugin_prefs=None) -> list[str]:
+def get_unmapped_columns(plugin_prefs: Any = None) -> list[str]:
     """
     Get list of syncable columns that are not mapped.
 
@@ -114,6 +121,36 @@ def get_unmapped_columns(plugin_prefs=None) -> list[str]:
     return unmapped
 
 
+def get_column_mappings(plugin_prefs: Any = None) -> dict[str, str]:
+    """
+    Get column mappings from preferences as a field -> column dict.
+
+    Returns a dict mapping field names (e.g. "status", "rating") to the
+    configured Calibre column (e.g. "#status", "rating"). Fields with no
+    column mapped are omitted.
+
+    Args:
+        plugin_prefs: Plugin preferences dict. Uses global prefs if None.
+
+    Returns:
+        Dict of {field_name: calibre_column} for mapped columns.
+    """
+    if plugin_prefs is None:
+        plugin_prefs = prefs
+    # Map pref_key to short field name (strip "_column" suffix)
+    mappings = {}
+    for pref_key, _ in SYNCABLE_COLUMNS:
+        col = plugin_prefs.get(pref_key, "")
+        if col:
+            field = pref_key.removesuffix("_column")
+            mappings[field] = col
+    # Also include progress_percent which isn't in SYNCABLE_COLUMNS
+    progress_pct = plugin_prefs.get("progress_percent_column", "")
+    if progress_pct:
+        mappings["progress_percent"] = progress_pct
+    return mappings
+
+
 class CustomColumnComboBox:
     """
     A combo box for selecting custom columns.
@@ -122,7 +159,13 @@ class CustomColumnComboBox:
     and retrieve the selected column's lookup name.
     """
 
-    def __init__(self, parent, custom_columns=None, selected_column="", initial_items=None):
+    def __init__(
+        self,
+        parent: Any,
+        custom_columns: dict | None = None,
+        selected_column: str = "",
+        initial_items: list | dict | None = None,
+    ) -> None:
         """
         Initialize the combo box.
 
@@ -144,7 +187,12 @@ class CustomColumnComboBox:
 
         self.populate_combo(custom_columns, selected_column, initial_items)
 
-    def populate_combo(self, custom_columns, selected_column="", initial_items=None):
+    def populate_combo(
+        self,
+        custom_columns: dict,
+        selected_column: str = "",
+        initial_items: list | dict | None = None,
+    ) -> None:
         """
         Populate the combo box with columns.
 
@@ -188,18 +236,18 @@ class CustomColumnComboBox:
 
         self.combo.setCurrentIndex(selected_idx)
 
-    def get_selected_column(self):
+    def get_selected_column(self) -> str:
         """Get the lookup name of the selected column (or empty string if not mapped)."""
         idx = self.combo.currentIndex()
         if 0 <= idx < len(self.column_names):
             return self.column_names[idx]
         return ""
 
-    def setMinimumWidth(self, width):
+    def setMinimumWidth(self, width: int) -> None:
         """Set minimum width of the combo box."""
         self.combo.setMinimumWidth(width)
 
-    def widget(self):
+    def widget(self) -> Any:
         """Get the underlying QComboBox widget."""
         return self.combo
 
@@ -216,7 +264,7 @@ class ConfigWidget:
     - Conflict resolution settings
     """
 
-    def __init__(self, plugin_action=None):
+    def __init__(self, plugin_action: Any = None) -> None:
         """
         Initialize the configuration widget.
 
@@ -248,7 +296,7 @@ class ConfigWidget:
         # Initialize column visibility based on current sync settings
         self._update_column_visibility()
 
-    def _create_account_tab(self):
+    def _create_account_tab(self) -> None:
         """Create the Account settings tab."""
         from qt.core import (
             QGroupBox,
@@ -298,7 +346,7 @@ class ConfigWidget:
 
         self.tabs.addTab(tab, "Account")
 
-    def _create_columns_tab(self):
+    def _create_columns_tab(self) -> None:
         """Create the Column Mappings tab."""
         from qt.core import (
             QFormLayout,
@@ -414,7 +462,7 @@ class ConfigWidget:
 
         self.tabs.addTab(tab, "Columns")
 
-    def _create_status_mapping_group(self, parent_layout, parent_widget):
+    def _create_status_mapping_group(self, parent_layout: Any, parent_widget: Any) -> None:
         """Create the status value mapping section."""
         from qt.core import QFormLayout, QGroupBox, QLabel, QLineEdit
 
@@ -443,7 +491,7 @@ class ConfigWidget:
 
         parent_layout.addWidget(group)
 
-    def _create_sync_tab(self):
+    def _create_sync_tab(self) -> None:
         """Create the Sync Options tab."""
         from qt.core import (
             QCheckBox,
@@ -558,7 +606,7 @@ class ConfigWidget:
 
         self.tabs.addTab(tab, "Sync Options")
 
-    def _create_lab_tab(self):
+    def _create_lab_tab(self) -> None:
         """Create the Lab (experimental features) tab."""
         from qt.core import (
             QCheckBox,
@@ -602,7 +650,7 @@ class ConfigWidget:
 
         self.tabs.addTab(tab, "Lab")
 
-    def _get_custom_columns(self, column_types):
+    def _get_custom_columns(self, column_types: list[str]) -> dict:
         """
         Get custom columns of specific types.
 
@@ -617,7 +665,7 @@ class ConfigWidget:
 
         try:
             custom_columns = self.plugin_action.gui.library_view.model().custom_columns
-        except (AttributeError, Exception):
+        except Exception:
             return {}
 
         available = {}
@@ -626,7 +674,7 @@ class ConfigWidget:
                 available[key] = column
         return available
 
-    def _get_rating_columns(self):
+    def _get_rating_columns(self) -> dict:
         """Get columns suitable for ratings (rating, int, float)."""
         columns = self._get_custom_columns(["rating", "int", "float"])
 
@@ -636,16 +684,16 @@ class ConfigWidget:
                 model = self.plugin_action.gui.library_view.model()
                 rating_name = model.orig_headers.get("rating", "Rating")
                 columns["rating"] = {"name": rating_name}
-            except (AttributeError, Exception):
+            except Exception:
                 columns["rating"] = {"name": "Rating"}
 
         return columns
 
-    def _get_tags_columns(self):
+    def _get_tags_columns(self) -> dict:
         """Get columns suitable for tags/lists."""
         return self._get_custom_columns(["text"])
 
-    def _update_column_visibility(self):
+    def _update_column_visibility(self) -> None:
         """Update visibility of column mapping rows based on sync feature toggles."""
         # Only update if all required attributes exist (after full initialization)
         if not hasattr(self, "columns_layout"):
@@ -687,11 +735,11 @@ class ConfigWidget:
         if hasattr(self, "lists_row"):
             self.columns_layout.setRowVisible(self.lists_row, self.sync_lists_checkbox.isChecked())
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to the internal widget."""
         return getattr(self.widget, name)
 
-    def _update_status_display(self):
+    def _update_status_display(self) -> None:
         """Update the status label based on current preferences."""
         username = prefs.get("username", "")
         if username:
@@ -701,7 +749,7 @@ class ConfigWidget:
             self.status_label.setText("<b>Status:</b> Not connected")
             self.status_label.setStyleSheet("color: gray;")
 
-    def _on_validate_clicked(self):
+    def _on_validate_clicked(self) -> None:
         """Handle validate button click."""
         token = self._normalize_token(self.token_input.text())
         if not token:
@@ -744,7 +792,7 @@ class ConfigWidget:
             self.status_label.setText(f"<b>Status:</b> {error_msg}")
             self.status_label.setStyleSheet("color: red;")
 
-    def _validate_token(self, token):
+    def _validate_token(self, token: str) -> tuple[bool, Any, str | None]:
         """
         Validate the API token by making a test request.
 
@@ -787,7 +835,7 @@ class ConfigWidget:
             token = token[7:].strip()
         return token
 
-    def save_settings(self):
+    def save_settings(self) -> None:
         """Save all settings from the configuration dialog."""
         # Save API token (normalize to remove Bearer prefix if present)
         token = self._normalize_token(self.token_input.text())

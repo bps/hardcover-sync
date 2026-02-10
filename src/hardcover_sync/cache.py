@@ -11,12 +11,9 @@ The cache is stored per-library using Calibre's database.
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import Any
 
 from .models import clean_isbn
-
-if TYPE_CHECKING:
-    from calibre.library.database2 import LibraryDatabase2  # noqa: F401
 
 # Cache expiry time (how long before we refresh from Hardcover)
 CACHE_EXPIRY_HOURS = 24
@@ -44,7 +41,7 @@ class HardcoverCache:
     The cache is stored in the Calibre library's plugin data.
     """
 
-    def __init__(self, db=None):
+    def __init__(self, db: Any = None):
         """
         Initialize the cache.
 
@@ -56,12 +53,12 @@ class HardcoverCache:
         self._library_cache: dict[int, dict] = {}  # hardcover_id -> user_book data
         self._library_cached_at: datetime | None = None
 
-    def set_database(self, db):
+    def set_database(self, db: Any) -> None:
         """Set the database instance and load cached data."""
         self._db = db
         self._load_cache()
 
-    def _load_cache(self):
+    def _load_cache(self) -> None:
         """Load cache from database storage."""
         if not self._db:
             return
@@ -79,7 +76,7 @@ class HardcoverCache:
             # If loading fails, start with empty cache
             pass
 
-    def _save_cache(self):
+    def _save_cache(self) -> None:
         """Save cache to database storage."""
         if not self._db:
             return
@@ -96,7 +93,7 @@ class HardcoverCache:
             # If saving fails, silently continue (cache is non-critical)
             pass
 
-    def _load_isbn_cache(self, data: dict):
+    def _load_isbn_cache(self, data: dict) -> None:
         """Load ISBN cache from serialized data."""
         for isbn, book_data in data.items():
             try:
@@ -125,7 +122,7 @@ class HardcoverCache:
                 }
         return result
 
-    def _load_library_cache(self, data: dict):
+    def _load_library_cache(self, data: dict) -> None:
         """Load library cache from serialized data."""
         cached_at = data.get("cached_at")
         if cached_at:
@@ -182,7 +179,7 @@ class HardcoverCache:
         hardcover_id: int,
         edition_id: int | None,
         title: str,
-    ):
+    ) -> None:
         """
         Cache an ISBN -> Hardcover ID mapping.
 
@@ -202,7 +199,7 @@ class HardcoverCache:
         )
         self._save_cache()
 
-    def remove_isbn(self, isbn: str):
+    def remove_isbn(self, isbn: str) -> None:
         """Remove an ISBN from the cache."""
         isbn = clean_isbn(isbn)
         if isbn in self._isbn_cache:
@@ -229,7 +226,7 @@ class HardcoverCache:
 
         return self._library_cache.get(hardcover_id)
 
-    def set_library(self, user_books: list[dict]):
+    def set_library(self, user_books: list[dict]) -> None:
         """
         Cache the user's library.
 
@@ -240,18 +237,18 @@ class HardcoverCache:
         self._library_cached_at = datetime.now()
         self._save_cache()
 
-    def update_library_book(self, hardcover_id: int, user_book_data: dict):
+    def update_library_book(self, hardcover_id: int, user_book_data: dict) -> None:
         """Update a single book in the library cache."""
         self._library_cache[hardcover_id] = user_book_data
         self._save_cache()
 
-    def remove_library_book(self, hardcover_id: int):
+    def remove_library_book(self, hardcover_id: int) -> None:
         """Remove a book from the library cache."""
         if hardcover_id in self._library_cache:
             del self._library_cache[hardcover_id]
             self._save_cache()
 
-    def clear_library_cache(self):
+    def clear_library_cache(self) -> None:
         """Clear the library cache."""
         self._library_cache = {}
         self._library_cached_at = None
@@ -269,7 +266,7 @@ class HardcoverCache:
     # Utility Methods
     # =========================================================================
 
-    def clear_all(self):
+    def clear_all(self) -> None:
         """Clear all caches."""
         self._isbn_cache = {}
         self._library_cache = {}
@@ -281,7 +278,7 @@ class HardcoverCache:
 _cache: HardcoverCache | None = None
 
 
-def get_cache(db=None) -> HardcoverCache:
+def get_cache(db: Any = None) -> HardcoverCache:
     """
     Get the global cache instance.
 
