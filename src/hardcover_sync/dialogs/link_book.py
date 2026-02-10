@@ -8,6 +8,7 @@ to Hardcover books. Supports cycling through multiple selected books.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from qt.core import (
     QAbstractItemView,
@@ -56,10 +57,10 @@ class LinkBookDialog(QDialog):
 
     def __init__(
         self,
-        parent,
-        db,
+        parent: Any,
+        db: Any,
         books: list[tuple[int, str, list[str]]],
-    ):
+    ) -> None:
         """
         Initialize the dialog.
 
@@ -94,7 +95,7 @@ class LinkBookDialog(QDialog):
     def auto_linked_count(self) -> int:
         return sum(1 for link in self.pending_links if link.auto)
 
-    def _setup_ui(self):
+    def _setup_ui(self) -> None:
         """Setup the dialog UI."""
         layout = QVBoxLayout(self)
 
@@ -181,7 +182,7 @@ class LinkBookDialog(QDialog):
             return None
         return HardcoverAPI(token=token)
 
-    def _load_current_book(self):
+    def _load_current_book(self) -> None:
         """Load and search for the current book in the queue."""
         book_id, title, authors = self._current_book
 
@@ -216,7 +217,7 @@ class LinkBookDialog(QDialog):
         # Search
         self._initial_search()
 
-    def _update_button_text(self):
+    def _update_button_text(self) -> None:
         """Update button labels based on position in the queue."""
         is_last = self.current_index >= len(self.books) - 1
 
@@ -228,7 +229,7 @@ class LinkBookDialog(QDialog):
             self.link_button.setText("Link")
             self.skip_button.setVisible(self._is_multi)
 
-    def _initial_search(self):
+    def _initial_search(self) -> None:
         """Perform initial search for the current book."""
         api = self._get_api()
         if not api:
@@ -256,7 +257,7 @@ class LinkBookDialog(QDialog):
         except Exception as e:
             self.status_label.setText(f"Search error: {e}")
 
-    def _stage_auto_link(self, result: MatchResult):
+    def _stage_auto_link(self, result: MatchResult) -> None:
         """Stage an auto-link for a perfect match and advance."""
         book_id = self._current_book[0]
         book = result.book
@@ -280,7 +281,7 @@ class LinkBookDialog(QDialog):
         # Last book - finish
         self._finish()
 
-    def _on_search(self):
+    def _on_search(self) -> None:
         """Handle search button click."""
         query = self.search_input.text().strip()
         if not query:
@@ -316,7 +317,7 @@ class LinkBookDialog(QDialog):
         finally:
             self.search_button.setEnabled(True)
 
-    def _populate_results(self):
+    def _populate_results(self) -> None:
         """Populate the results table."""
         self.results_table.setRowCount(len(self.results))
 
@@ -353,7 +354,7 @@ class LinkBookDialog(QDialog):
         if self.results:
             self.results_table.selectRow(0)
 
-    def _on_selection_changed(self):
+    def _on_selection_changed(self) -> None:
         """Handle selection change in results table."""
         rows = self.results_table.selectionModel().selectedRows()
         if rows:
@@ -366,14 +367,14 @@ class LinkBookDialog(QDialog):
         self.selected_book = None
         self.link_button.setEnabled(False)
 
-    def _on_double_click(self, item):
+    def _on_double_click(self, item: Any) -> None:
         """Handle double-click on a result row."""
         row = item.row()
         if 0 <= row < len(self.results):
             self.selected_book = self.results[row].book
             self._on_link()
 
-    def _on_link(self):
+    def _on_link(self) -> None:
         """Stage a link for the current book and advance or finish."""
         if not self.selected_book:
             return
@@ -396,7 +397,7 @@ class LinkBookDialog(QDialog):
         # Last book - finish
         self._finish()
 
-    def _on_skip(self):
+    def _on_skip(self) -> None:
         """Skip the current book and advance or finish."""
         self.skipped_count += 1
 
@@ -406,7 +407,7 @@ class LinkBookDialog(QDialog):
         # Last book - finish
         self._finish()
 
-    def _finish(self):
+    def _finish(self) -> None:
         """Commit all pending links and accept the dialog."""
         for link in self.pending_links:
             set_hardcover_slug(self.db, link.calibre_book_id, link.hardcover_slug, link.edition_id)
@@ -420,7 +421,7 @@ class LinkBookDialog(QDialog):
             return True
         return False
 
-    def _update_ui(self):
+    def _update_ui(self) -> None:
         """Force UI update."""
         QApplication.processEvents()
 

@@ -6,14 +6,14 @@ This dialog fetches the user's Hardcover library and syncs data to Calibre.
 
 from __future__ import annotations
 
+from typing import Any
+
 # Qt imports - only available in Calibre's runtime environment
 from qt.core import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
-    QDialog,
     QDialogButtonBox,
-    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -26,7 +26,7 @@ from qt.core import (
 )
 
 from ..api import HardcoverAPI
-from ..config import READING_STATUSES, get_plugin_prefs, get_unmapped_columns
+from ..config import READING_STATUSES, get_column_mappings, get_unmapped_columns
 from ..models import UserBook
 from ..sync import (
     NewBookAction,
@@ -36,16 +36,17 @@ from ..sync import (
     find_new_books,
     find_sync_from_changes,
 )
+from .base import HardcoverDialogBase
 
 
-class SyncFromHardcoverDialog(QDialog):
+class SyncFromHardcoverDialog(HardcoverDialogBase):
     """
     Dialog for syncing data from Hardcover to Calibre.
 
     Shows a preview of changes and allows the user to select which to apply.
     """
 
-    def __init__(self, parent, plugin_action, book_ids: list[int] | None = None):
+    def __init__(self, parent: Any, plugin_action: Any, book_ids: list[int] | None = None) -> None:
         """
         Initialize the dialog.
 
@@ -55,11 +56,7 @@ class SyncFromHardcoverDialog(QDialog):
             book_ids: Optional list of selected Calibre book IDs. If provided and not
                 all books are selected, only these books will be synced.
         """
-        super().__init__(parent)
-        self.plugin_action = plugin_action
-        self.gui = plugin_action.gui
-        self.db = self.gui.current_db.new_api
-        self.prefs = get_plugin_prefs()
+        super().__init__(parent, plugin_action, book_ids or [])
         self.changes: list[SyncChange] = []
         self.new_books: list[NewBookAction] = []
         self.hardcover_books: list[UserBook] = []
@@ -79,7 +76,7 @@ class SyncFromHardcoverDialog(QDialog):
         # Show diagnostic info immediately
         self._update_diagnostics()
 
-    def _setup_ui(self):
+    def _setup_ui(self) -> None:
         """Setup the dialog UI."""
         layout = QVBoxLayout(self)
 
@@ -166,33 +163,7 @@ class SyncFromHardcoverDialog(QDialog):
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
         layout.addWidget(self.button_box)
 
-    def _setup_diagnostics_panel(self, layout):
-        """Setup the diagnostics info panel."""
-        # Frame for diagnostics
-        diag_frame = QFrame()
-        diag_frame.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Sunken)
-        diag_layout = QVBoxLayout(diag_frame)
-        diag_layout.setContentsMargins(8, 8, 8, 8)
-
-        # Library status
-        self.library_status_label = QLabel()
-        self.library_status_label.setWordWrap(True)
-        diag_layout.addWidget(self.library_status_label)
-
-        # Column mapping status
-        self.column_status_label = QLabel()
-        self.column_status_label.setWordWrap(True)
-        diag_layout.addWidget(self.column_status_label)
-
-        # Warnings
-        self.warnings_label = QLabel()
-        self.warnings_label.setWordWrap(True)
-        self.warnings_label.setStyleSheet("color: #b35900;")  # Orange/warning color
-        diag_layout.addWidget(self.warnings_label)
-
-        layout.addWidget(diag_frame)
-
-    def _update_diagnostics(self):
+    def _update_diagnostics(self) -> None:
         """Update the diagnostics panel with current status."""
         # Count linked books in scope
         linked_count = 0
@@ -218,59 +189,18 @@ class SyncFromHardcoverDialog(QDialog):
             scope_text = f"<b>Scope:</b> All books in library ({all_count})"
 
         if linked_count == 0:
-            self.library_status_label.setText(
+            self.info_status_label.setText(
                 f"{scope_text}, "
                 f"<span style='color: red;'><b>0 linked to Hardcover</b></span><br>"
                 "<i>Use 'Link to Hardcover...' to connect books first.</i>"
             )
         else:
-            self.library_status_label.setText(
+            self.info_status_label.setText(
                 f"{scope_text}, <b>{linked_count} linked to Hardcover</b>"
             )
 
-        # Column mapping status - all fields are now supported via user_book_reads
-        mappings = []
-        unmapped = []
-
-        # All syncable fields
-        supported_columns = [
-            ("status_column", "Status"),
-            ("rating_column", "Rating"),
-            ("review_column", "Review"),
-            ("progress_column", "Progress"),
-            ("is_read_column", "Is Read"),
-            ("date_started_column", "Date Started"),
-            ("date_read_column", "Date Read"),
-        ]
-
-        for pref_key, display_name in supported_columns:
-            col = self.prefs.get(pref_key, "")
-            if col:
-                mappings.append(f"{display_name} → {col}")
-            else:
-                unmapped.append(display_name)
-
-        if mappings:
-            self.column_status_label.setText(f"<b>Mapped columns:</b> {', '.join(mappings)}")
-        else:
-            self.column_status_label.setText(
-                "<b>Mapped columns:</b> <span style='color: red;'>None</span>"
-            )
-
-        # Warnings
-        warnings = []
-        if linked_count == 0:
-            warnings.append("No books are linked to Hardcover - nothing can be synced.")
-        if unmapped:
-            warnings.append(f"Unmapped fields will be skipped: {', '.join(unmapped)}")
-        if not self.prefs.get("api_token"):
-            warnings.append("No API token configured!")
-
-        if warnings:
-            self.warnings_label.setText("⚠ " + " | ".join(warnings))
-            self.warnings_label.setVisible(True)
-        else:
-            self.warnings_label.setVisible(False)
+        # Column mapping and warnings (delegate to base class)
+        self._update_column_diagnostics(linked_count)
 
         # Update status message
         if not self.prefs.get("api_token"):
@@ -299,7 +229,7 @@ class SyncFromHardcoverDialog(QDialog):
                 self.status_label.setText("Click 'Fetch Library' to load your Hardcover books.")
             self.fetch_button.setEnabled(True)
 
-    def _on_add_books_toggled(self):
+    def _on_add_books_toggled(self) -> None:
         """Update scope display and fetch button when the add-books checkbox changes."""
         if self.scoped_book_ids is not None:
             if self.create_books_checkbox.isChecked():
@@ -308,17 +238,7 @@ class SyncFromHardcoverDialog(QDialog):
                 self.fetch_button.setText("Fetch Selected")
         self._update_diagnostics()
 
-    def _get_api(self) -> HardcoverAPI | None:
-        """Get an API instance with the configured token."""
-        token = self.prefs.get("api_token", "")
-        if not token:
-            self.status_label.setText(
-                "Error: No API token configured. Please configure the plugin first."
-            )
-            return None
-        return HardcoverAPI(token=token)
-
-    def _on_fetch(self):
+    def _on_fetch(self) -> None:
         """Fetch the user's Hardcover library."""
         api = self._get_api()
         if not api:
@@ -343,7 +263,7 @@ class SyncFromHardcoverDialog(QDialog):
                 # Need a full library fetch to discover unlinked books
                 self.hardcover_books = self._fetch_all_books(api)
                 # Build the full map so we correctly identify which books are new
-                full_hc_to_calibre = self._build_full_hardcover_to_calibre_map()
+                full_hc_to_calibre = self._build_hardcover_to_calibre_map(full=True)
             elif is_scoped and hc_to_calibre:
                 # Targeted fetch: only request the specific books by slug
                 hc_slugs = list(hc_to_calibre.keys())
@@ -475,17 +395,19 @@ class SyncFromHardcoverDialog(QDialog):
         new_books.sort(key=lambda x: x.title.lower())
         return new_books
 
-    def _build_hardcover_to_calibre_map(self) -> dict[str, int]:
+    def _build_hardcover_to_calibre_map(self, full: bool = False) -> dict[str, int]:
         """Build a map from Hardcover slug to Calibre book ID.
 
-        When scoped to selected books, only those books are included.
+        When scoped to selected books, only those books are included unless
+        ``full=True`` is passed, which always covers the entire library.
+        The full variant is used for new-book discovery.
         """
         hc_to_calibre = {}
 
-        if self.scoped_book_ids is not None:
-            book_ids = self.scoped_book_ids
-        else:
+        if full or self.scoped_book_ids is None:
             book_ids = list(self.db.all_book_ids())
+        else:
+            book_ids = self.scoped_book_ids
 
         for book_id in book_ids:
             identifiers = self.db.field_for("identifiers", book_id) or {}
@@ -495,37 +417,7 @@ class SyncFromHardcoverDialog(QDialog):
 
         return hc_to_calibre
 
-    def _build_full_hardcover_to_calibre_map(self) -> dict[str, int]:
-        """Build a map from Hardcover slug to Calibre book ID for the entire library.
-
-        Unlike _build_hardcover_to_calibre_map, this always covers all books
-        regardless of any selection scope. Used for new-book discovery.
-        """
-        hc_to_calibre = {}
-
-        for book_id in self.db.all_book_ids():
-            identifiers = self.db.field_for("identifiers", book_id) or {}
-            hc_id = identifiers.get("hardcover")
-            if hc_id:
-                hc_to_calibre[hc_id] = book_id
-
-        return hc_to_calibre
-
-    def _get_calibre_value(self, book_id: int, column: str):
-        """Get a value from a Calibre column."""
-        if not column:
-            return None
-
-        if column == "rating":
-            return self.db.field_for("rating", book_id)
-
-        if column.startswith("#"):
-            # Custom column
-            return self.db.field_for(column, book_id)
-
-        return self.db.field_for(column, book_id)
-
-    def _populate_changes_tree(self):
+    def _populate_changes_tree(self) -> None:
         """Populate the changes tree with books as parents and changes as children."""
         self.changes_tree.clear()
         self.changes_tree.blockSignals(True)
@@ -624,7 +516,7 @@ class SyncFromHardcoverDialog(QDialog):
         self.expand_all_button.setEnabled(has_items)
         self.collapse_all_button.setEnabled(has_items)
 
-    def _on_item_changed(self, item: QTreeWidgetItem, column: int):  # type: ignore[reportInvalidTypeForm]
+    def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:  # type: ignore[reportInvalidTypeForm]
         """Handle checkbox state changes in the tree."""
         if column != 0:
             return
@@ -686,7 +578,7 @@ class SyncFromHardcoverDialog(QDialog):
         self.changes_tree.blockSignals(False)
         self._update_summary()
 
-    def _set_children_checked(self, item: QTreeWidgetItem, checked: bool):  # type: ignore[reportInvalidTypeForm]
+    def _set_children_checked(self, item: QTreeWidgetItem, checked: bool) -> None:  # type: ignore[reportInvalidTypeForm]
         """Recursively set all children to checked/unchecked state."""
         for i in range(item.childCount()):
             child = item.child(i)
@@ -702,7 +594,7 @@ class SyncFromHardcoverDialog(QDialog):
                     # Recurse into book's children (individual changes)
                     self._set_children_checked(child, checked)
 
-    def _update_parent_check_state(self, parent: QTreeWidgetItem):  # type: ignore[reportInvalidTypeForm]
+    def _update_parent_check_state(self, parent: QTreeWidgetItem) -> None:  # type: ignore[reportInvalidTypeForm]
         """Update parent checkbox based on children states."""
         checked_count = 0
         unchecked_count = 0
@@ -723,7 +615,7 @@ class SyncFromHardcoverDialog(QDialog):
         else:
             parent.setCheckState(0, Qt.CheckState.PartiallyChecked)
 
-    def _sync_parent_check_states(self):
+    def _sync_parent_check_states(self) -> None:
         """Sync all parent check states to reflect their children after populating the tree."""
         for i in range(self.changes_tree.topLevelItemCount()):
             header = self.changes_tree.topLevelItem(i)
@@ -751,7 +643,7 @@ class SyncFromHardcoverDialog(QDialog):
                 # Then update the header based on book items
                 self._update_parent_check_state(header)
 
-    def _update_summary(self):
+    def _update_summary(self) -> None:
         """Update the summary label."""
         selected_changes = sum(1 for c in self.changes if c.apply)
         total_changes = len(self.changes)
@@ -777,7 +669,7 @@ class SyncFromHardcoverDialog(QDialog):
         has_selections = selected_changes > 0 or selected_new > 0
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(has_selections)
 
-    def _on_apply(self):
+    def _on_apply(self) -> None:
         """Apply the selected changes and create new books."""
         changes_to_apply = [c for c in self.changes if c.apply]
         new_books_to_create = [b for b in self.new_books if b.apply]
@@ -909,26 +801,8 @@ class SyncFromHardcoverDialog(QDialog):
         if not column:
             return False, f"No column mapped for {change.display_field}"
 
-        value = change.api_value
-
         try:
-            # Handle different column types
-            if column == "rating":
-                # Built-in rating
-                self.db.set_field("rating", {change.calibre_id: int(value) if value else None})
-            elif column.startswith("#"):
-                # Custom column - need to determine type
-                col_info = self._get_custom_column_metadata(column)
-                if not col_info:
-                    return False, f"Column {column} not found"
-
-                datatype = col_info.get("datatype", "text")
-                value = coerce_value_for_column(value, datatype)
-
-                self.db.set_field(column, {change.calibre_id: value})
-            else:
-                self.db.set_field(column, {change.calibre_id: value})
-
+            self._set_column_value(change.calibre_id, column, change.api_value)
             return True, None
 
         except Exception as e:
@@ -965,10 +839,7 @@ class SyncFromHardcoverDialog(QDialog):
 
         # Set ISBN if available
         if new_book.isbn:
-            if len(new_book.isbn) == 13:
-                mi.set_identifier("isbn", new_book.isbn)
-            elif len(new_book.isbn) == 10:
-                mi.set_identifier("isbn", new_book.isbn)
+            mi.set_identifier("isbn", new_book.isbn)
 
         # Set publication date if available
         if new_book.release_date:
@@ -1004,7 +875,7 @@ class SyncFromHardcoverDialog(QDialog):
 
         return book_id
 
-    def _apply_user_book_data(self, book_id: int, user_book: UserBook):
+    def _apply_user_book_data(self, book_id: int, user_book: UserBook) -> None:
         """
         Apply Hardcover user book data to a Calibre book.
 
@@ -1014,12 +885,13 @@ class SyncFromHardcoverDialog(QDialog):
         from datetime import datetime
 
         # Get column mappings
-        status_col = self.prefs.get("status_column", "")
-        rating_col = self.prefs.get("rating_column", "")
-        progress_col = self.prefs.get("progress_column", "")
-        date_started_col = self.prefs.get("date_started_column", "")
-        date_read_col = self.prefs.get("date_read_column", "")
-        review_col = self.prefs.get("review_column", "")
+        col = get_column_mappings(self.prefs)
+        status_col = col.get("status", "")
+        rating_col = col.get("rating", "")
+        progress_col = col.get("progress", "")
+        date_started_col = col.get("date_started", "")
+        date_read_col = col.get("date_read", "")
+        review_col = col.get("review", "")
 
         # Get status mappings
         status_mappings = self.prefs.get("status_mappings", {})
@@ -1070,43 +942,20 @@ class SyncFromHardcoverDialog(QDialog):
         if review_col and user_book.review:
             self._set_column_value(book_id, review_col, user_book.review)
 
-    def _set_column_value(self, book_id: int, column: str, value):
+    def _set_column_value(self, book_id: int, column: str, value: Any) -> None:
         """Set a column value with appropriate type conversion."""
         if column == "rating":
             self.db.set_field("rating", {book_id: int(value) if value else None})
         elif column.startswith("#"):
             col_info = self._get_custom_column_metadata(column)
             if col_info:
-                datatype = col_info.get("datatype")
-                if datatype == "int":
-                    value = int(value) if value else None
-                elif datatype == "float":
-                    value = float(value) if value else None
-                elif datatype == "rating":
-                    value = int(value) if value else None
-                # datetime values are already datetime objects
+                datatype = col_info.get("datatype", "text")
+                value = coerce_value_for_column(value, datatype)
             self.db.set_field(column, {book_id: value})
         else:
             self.db.set_field(column, {book_id: value})
 
-    def _get_custom_column_metadata(self, column: str) -> dict | None:
-        """Get metadata for a custom column."""
-        try:
-            custom_columns = self.gui.library_view.model().custom_columns
-            return custom_columns.get(column)
-        except (AttributeError, Exception):
-            return None
-
     def _get_column_for_field(self, field: str) -> str | None:
         """Get the Calibre column name for a sync field."""
-        mapping = {
-            "status": self.prefs.get("status_column", ""),
-            "rating": self.prefs.get("rating_column", ""),
-            "progress": self.prefs.get("progress_column", ""),
-            "progress_percent": self.prefs.get("progress_percent_column", ""),
-            "date_started": self.prefs.get("date_started_column", ""),
-            "date_read": self.prefs.get("date_read_column", ""),
-            "is_read": self.prefs.get("is_read_column", ""),
-            "review": self.prefs.get("review_column", ""),
-        }
-        return mapping.get(field)
+        col = get_column_mappings(self.prefs).get(field)
+        return col or None

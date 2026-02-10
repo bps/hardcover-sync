@@ -4,6 +4,10 @@ Add to list dialog.
 This dialog allows the user to add selected books to a Hardcover list.
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 from qt.core import (
     QDialogButtonBox,
     QLabel,
@@ -25,7 +29,7 @@ class AddToListDialog(HardcoverDialogBase):
     Shows the user's lists and allows selecting one to add books to.
     """
 
-    def __init__(self, parent, plugin_action, book_ids: list[int]):
+    def __init__(self, parent: Any, plugin_action: Any, book_ids: list[int]) -> None:
         """
         Initialize the dialog.
 
@@ -48,7 +52,7 @@ class AddToListDialog(HardcoverDialogBase):
         self._setup_ui()
         self._load_lists()
 
-    def _setup_ui(self):
+    def _setup_ui(self) -> None:
         """Setup the dialog UI."""
         layout = QVBoxLayout(self)
 
@@ -86,7 +90,7 @@ class AddToListDialog(HardcoverDialogBase):
         # Enable OK button when selection changes
         self.list_widget.itemSelectionChanged.connect(self._on_selection_changed)
 
-    def _load_lists(self):
+    def _load_lists(self) -> None:
         """Load the user's lists from Hardcover."""
         if not self.book_info:
             return
@@ -108,7 +112,7 @@ class AddToListDialog(HardcoverDialogBase):
         except Exception as e:
             self.status_label.setText(f"Error loading lists: {e}")
 
-    def _populate_list_widget(self):
+    def _populate_list_widget(self) -> None:
         """Populate the list widget with user's lists."""
         self.list_widget.clear()
 
@@ -117,16 +121,16 @@ class AddToListDialog(HardcoverDialogBase):
             item.setData(Qt.ItemDataRole.UserRole, lst.id)
             self.list_widget.addItem(item)
 
-    def _on_selection_changed(self):
+    def _on_selection_changed(self) -> None:
         """Handle list selection change."""
         has_selection = len(self.list_widget.selectedItems()) > 0
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(has_selection)
 
-    def _on_item_double_clicked(self, item: QListWidgetItem):
+    def _on_item_double_clicked(self, item: Any) -> None:
         """Handle double-click on a list item."""
         self._on_apply()
 
-    def _on_apply(self):
+    def _on_apply(self) -> None:
         """Add books to the selected list."""
         selected_items = self.list_widget.selectedItems()
         if not selected_items:

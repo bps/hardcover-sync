@@ -4,6 +4,10 @@ Update reading progress dialog.
 This dialog allows the user to update reading progress for selected books.
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 from qt.core import (
     QDialogButtonBox,
     QHBoxLayout,
@@ -23,7 +27,7 @@ class UpdateProgressDialog(HardcoverDialogBase):
     Allows entering current page number for the selected book.
     """
 
-    def __init__(self, parent, plugin_action, book_ids: list[int]):
+    def __init__(self, parent: Any, plugin_action: Any, book_ids: list[int]) -> None:
         """
         Initialize the dialog.
 
@@ -43,7 +47,7 @@ class UpdateProgressDialog(HardcoverDialogBase):
 
         self._setup_ui()
 
-    def _setup_ui(self):
+    def _setup_ui(self) -> None:
         """Setup the dialog UI."""
         layout = QVBoxLayout(self)
 
@@ -98,7 +102,7 @@ class UpdateProgressDialog(HardcoverDialogBase):
         if len(self.book_info) == 1:
             self._load_current_progress()
 
-    def _load_current_progress(self):
+    def _load_current_progress(self) -> None:
         """Load current progress from Hardcover for single book."""
         api = self._get_api()
         if not api:
@@ -112,7 +116,7 @@ class UpdateProgressDialog(HardcoverDialogBase):
         except Exception:  # noqa: S110
             pass  # Non-critical: just show default values if we can't load current progress
 
-    def _on_apply(self):
+    def _on_apply(self) -> None:
         """Apply the progress update."""
         api = self._get_api()
         if not api:
@@ -194,7 +198,7 @@ class UpdateProgressDialog(HardcoverDialogBase):
         else:
             self.status_label.setText("No books were updated.")
 
-    def _update_calibre_progress(self, book_id: int, column: str, page_num: int):
+    def _update_calibre_progress(self, book_id: int, column: str, page_num: int) -> None:
         """Update the progress column in Calibre."""
         try:
             if column.startswith("#"):

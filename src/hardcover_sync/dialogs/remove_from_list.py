@@ -4,7 +4,10 @@ Remove from list dialog.
 This dialog allows the user to remove selected books from a Hardcover list.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import Any
 
 from qt.core import (
     QDialogButtonBox,
@@ -17,7 +20,6 @@ from qt.core import (
 )
 
 from .base import HardcoverDialogBase
-from ..queries import BOOK_LISTS_QUERY
 
 
 @dataclass
@@ -36,7 +38,7 @@ class RemoveFromListDialog(HardcoverDialogBase):
     Shows which lists contain the selected book(s) and allows removing them.
     """
 
-    def __init__(self, parent, plugin_action, book_ids: list[int]):
+    def __init__(self, parent: Any, plugin_action: Any, book_ids: list[int]) -> None:
         """
         Initialize the dialog.
 
@@ -59,7 +61,7 @@ class RemoveFromListDialog(HardcoverDialogBase):
         self._setup_ui()
         self._load_list_memberships()
 
-    def _setup_ui(self):
+    def _setup_ui(self) -> None:
         """Setup the dialog UI."""
         layout = QVBoxLayout(self)
 
@@ -98,7 +100,7 @@ class RemoveFromListDialog(HardcoverDialogBase):
         # Enable OK button when selection changes
         self.list_widget.itemSelectionChanged.connect(self._on_selection_changed)
 
-    def _load_list_memberships(self):
+    def _load_list_memberships(self) -> None:
         """Load which lists contain the selected books."""
         if not self.book_info:
             return
@@ -113,24 +115,19 @@ class RemoveFromListDialog(HardcoverDialogBase):
         try:
             # For each book, find which lists contain it
             for book in self.book_info:
-                result = api._execute(
-                    BOOK_LISTS_QUERY,
-                    {"book_id": book["hardcover_id"], "user_id": api.get_me().id},
-                )
+                memberships = api.get_book_list_memberships(book["hardcover_id"])
 
-                for lb in result.get("list_books", []):
-                    lst = lb.get("list", {})
-                    if lst:
-                        list_id = lst["id"]
-                        if list_id not in self.list_memberships:
-                            self.list_memberships[list_id] = []
-                        self.list_memberships[list_id].append(
-                            ListBookInfo(
-                                list_id=list_id,
-                                list_name=lst["name"],
-                                list_book_id=lb["id"],
-                            )
+                for membership in memberships:
+                    list_id = membership.list_id
+                    if list_id not in self.list_memberships:
+                        self.list_memberships[list_id] = []
+                    self.list_memberships[list_id].append(
+                        ListBookInfo(
+                            list_id=list_id,
+                            list_name=membership.list_name,
+                            list_book_id=membership.list_book_id,
                         )
+                    )
 
             self._populate_list_widget()
 
@@ -144,7 +141,7 @@ class RemoveFromListDialog(HardcoverDialogBase):
         except Exception as e:
             self.status_label.setText(f"Error: {e}")
 
-    def _populate_list_widget(self):
+    def _populate_list_widget(self) -> None:
         """Populate the list widget with lists containing the books."""
         self.list_widget.clear()
 
@@ -158,16 +155,16 @@ class RemoveFromListDialog(HardcoverDialogBase):
             item.setData(Qt.ItemDataRole.UserRole, list_id)
             self.list_widget.addItem(item)
 
-    def _on_selection_changed(self):
+    def _on_selection_changed(self) -> None:
         """Handle list selection change."""
         has_selection = len(self.list_widget.selectedItems()) > 0
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(has_selection)
 
-    def _on_item_double_clicked(self, item: QListWidgetItem):
+    def _on_item_double_clicked(self, item: Any) -> None:
         """Handle double-click on a list item."""
         self._on_apply()
 
-    def _on_apply(self):
+    def _on_apply(self) -> None:
         """Remove books from the selected lists."""
         selected_items = self.list_widget.selectedItems()
         if not selected_items:
