@@ -1803,3 +1803,96 @@ class TestDryRunOptionalParams:
 
         log = dry_run_api.get_dry_run_log()
         assert log[0]["variables"]["object"]["last_read_date"] == "2024-12-25"
+
+
+class TestGetBookListMemberships:
+    """Tests for the get_book_list_memberships method."""
+
+    def test_get_book_list_memberships(self, api, mock_client):
+        """Test getting list memberships for a book."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {
+                "list_books": [
+                    {
+                        "id": 50,
+                        "list": {
+                            "id": 10,
+                            "name": "Favorites",
+                        },
+                    },
+                    {
+                        "id": 51,
+                        "list": {
+                            "id": 20,
+                            "name": "To Re-read",
+                        },
+                    },
+                ]
+            },
+        ]
+
+        memberships = api.get_book_list_memberships(book_id=789)
+
+        assert len(memberships) == 2
+        assert memberships[0].list_book_id == 50
+        assert memberships[0].list_id == 10
+        assert memberships[0].list_name == "Favorites"
+        assert memberships[1].list_book_id == 51
+        assert memberships[1].list_id == 20
+        assert memberships[1].list_name == "To Re-read"
+
+    def test_get_book_list_memberships_empty(self, api, mock_client):
+        """Test getting list memberships for a book not in any lists."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {"list_books": []},
+        ]
+
+        memberships = api.get_book_list_memberships(book_id=789)
+
+        assert memberships == []
+
+    def test_get_book_list_memberships_skips_null_list(self, api, mock_client):
+        """Entries with null list data are skipped."""
+        mock_client.return_value.execute.side_effect = [
+            {
+                "me": {
+                    "id": 123,
+                    "username": "testuser",
+                    "name": None,
+                    "books_count": 0,
+                }
+            },
+            {
+                "list_books": [
+                    {"id": 50, "list": None},
+                    {
+                        "id": 51,
+                        "list": {
+                            "id": 20,
+                            "name": "Classics",
+                        },
+                    },
+                ]
+            },
+        ]
+
+        memberships = api.get_book_list_memberships(book_id=789)
+
+        assert len(memberships) == 1
+        assert memberships[0].list_name == "Classics"

@@ -9,15 +9,18 @@ from hardcover_sync.sync import (
     NewBookAction,
     SyncChange,
     SyncToChange,
+    SyncToResult,
     coerce_value_for_column,
     convert_rating_from_calibre,
     convert_rating_to_calibre,
     extract_date,
     find_new_books,
     find_sync_from_changes,
+    find_sync_to_changes,
     format_rating_as_stars,
     get_status_from_calibre,
     get_status_from_hardcover,
+    truncate_for_display,
 )
 
 
@@ -1243,3 +1246,773 @@ class TestCoerceValueForColumn:
     def test_bool_empty_list(self):
         """Empty list coerces to False via bool()."""
         assert coerce_value_for_column([], "bool") is False
+
+
+class TestTruncateForDisplay:
+    """Tests for truncate_for_display function."""
+
+    def test_none_returns_empty_placeholder(self):
+        """None text returns the empty placeholder."""
+        assert truncate_for_display(None) == "(empty)"
+
+    def test_empty_string_returns_empty_placeholder(self):
+        """Empty string returns the empty placeholder."""
+        assert truncate_for_display("") == "(empty)"
+
+    def test_short_text_unchanged(self):
+        """Text shorter than max_length is returned unchanged."""
+        assert truncate_for_display("Hello world") == "Hello world"
+
+    def test_text_at_max_length(self):
+        """Text exactly at max_length is returned unchanged."""
+        text = "x" * 50
+        assert truncate_for_display(text) == text
+
+    def test_text_over_max_length_truncated(self):
+        """Text longer than max_length is truncated with ellipsis."""
+        text = "x" * 60
+        result = truncate_for_display(text)
+        assert result == "x" * 50 + "..."
+        assert len(result) == 53
+
+    def test_custom_max_length(self):
+        """Custom max_length works."""
+        assert truncate_for_display("Hello world", max_length=5) == "Hello..."
+
+    def test_custom_empty_placeholder(self):
+        """Custom empty placeholder works."""
+        assert truncate_for_display(None, empty="N/A") == "N/A"
+        assert truncate_for_display("", empty="--") == "--"
+
+
+class TestSyncToResult:
+    """Tests for SyncToResult dataclass."""
+
+    def test_default_values(self):
+        """Test that SyncToResult initializes with correct defaults."""
+        result = SyncToResult()
+        assert result.changes == []
+        assert result.hardcover_data == {}
+        assert result.linked_count == 0
+        assert result.not_linked_count == 0
+        assert result.api_errors == 0
+        assert result.books_with_changes == 0
+
+    def test_mutable_defaults_are_independent(self):
+        """Test that mutable defaults are independent between instances."""
+        r1 = SyncToResult()
+        r2 = SyncToResult()
+        r1.changes.append("test")
+        assert len(r2.changes) == 0
+
+    def test_accumulation(self):
+        """Test accumulating stats."""
+        result = SyncToResult()
+        result.linked_count += 3
+        result.not_linked_count += 2
+        result.api_errors += 1
+        result.books_with_changes += 2
+        assert result.linked_count == 3
+        assert result.not_linked_count == 2
+        assert result.api_errors == 1
+        assert result.books_with_changes == 2
+
+
+class TestFindSyncToChanges:
+    """Tests for find_sync_to_changes function."""
+
+    def _make_user_book(
+        self,
+        book_id: int = 100,
+        status_id: int = 3,
+        rating: float = None,
+        review: str = None,
+        progress_pages: int = None,
+        progress: float = None,
+        started_at: str = None,
+        finished_at: str = None,
+    ) -> UserBook:
+        """Helper to create a UserBook with optional reads."""
+        from hardcover_sync.models import UserBookRead
+
+        reads = []
+        if progress_pages is not None or progress is not None or started_at or finished_at:
+            reads.append(
+                UserBookRead(
+                    id=1,
+                    progress_pages=progress_pages,
+                    progress=progress,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+            )
+
+        return UserBook(
+            id=1,
+            book_id=book_id,
+            status_id=status_id,
+            rating=rating,
+            review=review,
+            reads=reads if reads else None,
+            book=Book(id=book_id, title="Test Book", slug="test-book"),
+        )
+
+    def _make_book(self, book_id: int = 100) -> Book:
+        """Helper to create a simple Book."""
+        return Book(id=book_id, title="Test Book", slug="test-book")
+
+    def _call(
+        self,
+        book_ids=None,
+        identifiers=None,
+        calibre_values=None,
+        calibre_titles=None,
+        resolved_books=None,
+        user_books=None,
+        prefs=None,
+        column_metadata=None,
+        on_progress=None,
+    ):
+        """Helper to call find_sync_to_changes with sensible defaults."""
+        if book_ids is None:
+            book_ids = [1]
+        if identifiers is None:
+            identifiers = {1: {"hardcover": "100"}}
+        if calibre_values is None:
+            calibre_values = {}
+        if calibre_titles is None:
+            calibre_titles = {1: "Test Book"}
+        if resolved_books is None:
+            resolved_books = {"100": self._make_book()}
+        if user_books is None:
+            user_books = {}
+        if prefs is None:
+            prefs = {"status_column": "", "status_mappings": {}}
+
+        def get_identifiers(bid):
+            return identifiers.get(bid, {})
+
+        def get_calibre_value(bid, col):
+            return calibre_values.get((bid, col))
+
+        def get_calibre_title(bid):
+            return calibre_titles.get(bid, "Unknown")
+
+        def resolve_book(slug_or_id):
+            return resolved_books.get(slug_or_id)
+
+        def get_user_book(hc_book_id):
+            return user_books.get(hc_book_id)
+
+        def get_column_metadata_fn(col):
+            if column_metadata:
+                return column_metadata.get(col)
+            return None
+
+        return find_sync_to_changes(
+            book_ids=book_ids,
+            get_identifiers=get_identifiers,
+            get_calibre_value=get_calibre_value,
+            get_calibre_title=get_calibre_title,
+            resolve_book=resolve_book,
+            get_user_book=get_user_book,
+            prefs=prefs,
+            get_column_metadata=get_column_metadata_fn,
+            on_progress=on_progress,
+        )
+
+    # --- Book linking tests ---
+
+    def test_not_linked_book_skipped(self):
+        """Books without hardcover identifier are skipped."""
+        result = self._call(
+            book_ids=[1],
+            identifiers={1: {}},  # no hardcover key
+        )
+        assert result.not_linked_count == 1
+        assert result.linked_count == 0
+        assert len(result.changes) == 0
+
+    def test_unresolved_book_skipped(self):
+        """Books that can't be resolved on Hardcover are skipped."""
+        result = self._call(
+            book_ids=[1],
+            identifiers={1: {"hardcover": "999"}},
+            resolved_books={},  # nothing resolves
+        )
+        assert result.not_linked_count == 1
+        assert result.linked_count == 0
+
+    def test_linked_book_counted(self):
+        """Linked books increment linked_count."""
+        result = self._call(
+            user_books={100: self._make_user_book()},
+        )
+        assert result.linked_count == 1
+        assert result.not_linked_count == 0
+
+    # --- Status change tests ---
+
+    def test_status_change_detected(self):
+        """Detects status difference between Calibre and Hardcover."""
+        hc_user_book = self._make_user_book(status_id=1)  # Want to Read on HC
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#status"): "Currently Reading"},
+            user_books={100: hc_user_book},
+        )
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 1
+        assert status_changes[0].new_value == "Currently Reading"
+        assert status_changes[0].old_value == "Want to Read"
+
+    def test_status_no_change_when_equal(self):
+        """No change when Calibre status matches Hardcover."""
+        hc_user_book = self._make_user_book(status_id=3)  # Read
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#status"): "Read"},
+            user_books={100: hc_user_book},
+        )
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 0
+
+    def test_status_empty_calibre_value_skipped(self):
+        """No status change when Calibre column is empty."""
+        hc_user_book = self._make_user_book(status_id=3)
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#status"): None},
+            user_books={100: hc_user_book},
+        )
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 0
+
+    def test_status_with_custom_mapping(self):
+        """Status change uses custom status mappings."""
+        hc_user_book = self._make_user_book(status_id=1)  # Want to Read on HC
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {"3": "Finished"},
+            },
+            calibre_values={(1, "#status"): "Finished"},  # maps to status_id 3
+            user_books={100: hc_user_book},
+        )
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 1
+        assert status_changes[0].new_value == "Finished"
+
+    def test_status_not_in_library_old_value(self):
+        """When no user_book on HC, old_value shows '(not in library)'."""
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#status"): "Currently Reading"},
+            user_books={},  # no user_book
+        )
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 1
+        assert status_changes[0].old_value == "(not in library)"
+
+    # --- Rating change tests ---
+
+    def test_rating_change_detected(self):
+        """Detects rating difference."""
+        hc_user_book = self._make_user_book(rating=3.0)
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "rating_column": "rating",
+            },
+            calibre_values={(1, "rating"): 10},  # 10/10 = 5.0 on HC scale
+            user_books={100: hc_user_book},
+        )
+        rating_changes = [c for c in result.changes if c.field == "rating"]
+        assert len(rating_changes) == 1
+        assert rating_changes[0].api_value == 5.0
+
+    def test_rating_no_change_when_equal(self):
+        """No change when ratings match."""
+        hc_user_book = self._make_user_book(rating=5.0)
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "rating_column": "rating",
+            },
+            calibre_values={(1, "rating"): 10},  # 10/10 = 5.0
+            user_books={100: hc_user_book},
+        )
+        rating_changes = [c for c in result.changes if c.field == "rating"]
+        assert len(rating_changes) == 0
+
+    def test_rating_none_calibre_skipped(self):
+        """No rating change when Calibre value is None."""
+        hc_user_book = self._make_user_book(rating=4.0)
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "rating_column": "rating",
+            },
+            calibre_values={(1, "rating"): None},
+            user_books={100: hc_user_book},
+        )
+        rating_changes = [c for c in result.changes if c.field == "rating"]
+        assert len(rating_changes) == 0
+
+    def test_rating_no_user_book_shows_none(self):
+        """Rating when no HC user_book uses None as current."""
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "rating_column": "rating",
+            },
+            calibre_values={(1, "rating"): 8},  # 4.0 on HC scale
+            user_books={},
+        )
+        rating_changes = [c for c in result.changes if c.field == "rating"]
+        assert len(rating_changes) == 1
+        assert rating_changes[0].api_value == 4.0
+
+    # --- Progress (pages) tests ---
+
+    def test_progress_pages_change_detected(self):
+        """Detects progress pages difference."""
+        hc_user_book = self._make_user_book(progress_pages=100)
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "progress_column": "#pages",
+            },
+            calibre_values={(1, "#pages"): 200},
+            user_books={100: hc_user_book},
+        )
+        progress_changes = [c for c in result.changes if c.field == "progress"]
+        assert len(progress_changes) == 1
+        assert progress_changes[0].new_value == "200"
+        assert progress_changes[0].old_value == "100"
+
+    def test_progress_pages_no_change(self):
+        """No change when progress pages match."""
+        hc_user_book = self._make_user_book(progress_pages=150)
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "progress_column": "#pages",
+            },
+            calibre_values={(1, "#pages"): 150},
+            user_books={100: hc_user_book},
+        )
+        progress_changes = [c for c in result.changes if c.field == "progress"]
+        assert len(progress_changes) == 0
+
+    def test_progress_pages_empty_old_value(self):
+        """Old value shows '(empty)' when no HC progress."""
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "progress_column": "#pages",
+            },
+            calibre_values={(1, "#pages"): 50},
+            user_books={},
+        )
+        progress_changes = [c for c in result.changes if c.field == "progress"]
+        assert len(progress_changes) == 1
+        assert progress_changes[0].old_value == "(empty)"
+
+    # --- Progress percent tests ---
+
+    def test_progress_percent_change_detected(self):
+        """Detects progress percent difference."""
+        hc_user_book = self._make_user_book(progress=0.50)  # 50%
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "progress_percent_column": "#pct",
+            },
+            calibre_values={(1, "#pct"): 75.0},
+            user_books={100: hc_user_book},
+        )
+        pct_changes = [c for c in result.changes if c.field == "progress_percent"]
+        assert len(pct_changes) == 1
+        assert "75.0%" in pct_changes[0].new_value
+        assert pct_changes[0].api_value == 0.75  # converted to 0-1 for API
+
+    def test_progress_percent_no_change_when_equal(self):
+        """No change when progress percent matches (after rounding)."""
+        hc_user_book = self._make_user_book(progress=0.50)  # 50%
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "progress_percent_column": "#pct",
+            },
+            calibre_values={(1, "#pct"): 50.0},
+            user_books={100: hc_user_book},
+        )
+        pct_changes = [c for c in result.changes if c.field == "progress_percent"]
+        assert len(pct_changes) == 0
+
+    def test_progress_percent_empty_old_value(self):
+        """Old value shows '(empty)' when no HC progress percent."""
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "progress_percent_column": "#pct",
+            },
+            calibre_values={(1, "#pct"): 25.0},
+            user_books={},
+        )
+        pct_changes = [c for c in result.changes if c.field == "progress_percent"]
+        assert len(pct_changes) == 1
+        assert pct_changes[0].old_value == "(empty)"
+
+    # --- Date started tests ---
+
+    def test_date_started_change_detected(self):
+        """Detects date started difference."""
+        hc_user_book = self._make_user_book(started_at="2024-01-15T10:00:00")
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "date_started_column": "#started",
+            },
+            calibre_values={(1, "#started"): "2024-06-01"},
+            user_books={100: hc_user_book},
+        )
+        date_changes = [c for c in result.changes if c.field == "date_started"]
+        assert len(date_changes) == 1
+        assert date_changes[0].new_value == "2024-06-01"
+        assert date_changes[0].old_value == "2024-01-15"
+
+    def test_date_started_empty_old_value(self):
+        """Old value shows '(empty)' when no HC start date."""
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "date_started_column": "#started",
+            },
+            calibre_values={(1, "#started"): "2024-03-01"},
+            user_books={},
+        )
+        date_changes = [c for c in result.changes if c.field == "date_started"]
+        assert len(date_changes) == 1
+        assert date_changes[0].old_value == "(empty)"
+
+    def test_date_started_no_change_when_equal(self):
+        """No change when dates match."""
+        hc_user_book = self._make_user_book(started_at="2024-03-15")
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "date_started_column": "#started",
+            },
+            calibre_values={(1, "#started"): "2024-03-15"},
+            user_books={100: hc_user_book},
+        )
+        date_changes = [c for c in result.changes if c.field == "date_started"]
+        assert len(date_changes) == 0
+
+    # --- Date read tests ---
+
+    def test_date_read_change_detected(self):
+        """Detects date read difference."""
+        hc_user_book = self._make_user_book(finished_at="2024-06-20")
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "date_read_column": "#finished",
+            },
+            calibre_values={(1, "#finished"): "2024-05-01"},
+            user_books={100: hc_user_book},
+        )
+        date_changes = [c for c in result.changes if c.field == "date_read"]
+        assert len(date_changes) == 1
+        assert date_changes[0].new_value == "2024-05-01"
+        assert date_changes[0].old_value == "2024-06-20"
+
+    def test_date_read_empty_old_value(self):
+        """Old value shows '(empty)' when no HC finish date."""
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "date_read_column": "#finished",
+            },
+            calibre_values={(1, "#finished"): "2024-06-20"},
+            user_books={},
+        )
+        date_changes = [c for c in result.changes if c.field == "date_read"]
+        assert len(date_changes) == 1
+        assert date_changes[0].old_value == "(empty)"
+
+    # --- Review tests ---
+
+    def test_review_change_detected(self):
+        """Detects review difference."""
+        hc_user_book = self._make_user_book(review="Old review")
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "review_column": "#review",
+            },
+            calibre_values={(1, "#review"): "New review"},
+            user_books={100: hc_user_book},
+        )
+        review_changes = [c for c in result.changes if c.field == "review"]
+        assert len(review_changes) == 1
+
+    def test_review_no_change_when_equal(self):
+        """No change when reviews match."""
+        hc_user_book = self._make_user_book(review="Same review")
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "review_column": "#review",
+            },
+            calibre_values={(1, "#review"): "Same review"},
+            user_books={100: hc_user_book},
+        )
+        review_changes = [c for c in result.changes if c.field == "review"]
+        assert len(review_changes) == 0
+
+    def test_review_empty_calibre_skipped(self):
+        """No review change when Calibre has no review."""
+        hc_user_book = self._make_user_book(review="HC review")
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "review_column": "#review",
+            },
+            calibre_values={(1, "#review"): None},
+            user_books={100: hc_user_book},
+        )
+        review_changes = [c for c in result.changes if c.field == "review"]
+        assert len(review_changes) == 0
+
+    # --- Multiple books and fields ---
+
+    def test_multiple_books(self):
+        """Process multiple books correctly."""
+        hc_book_a = self._make_user_book(book_id=100, status_id=1)
+        hc_book_b = self._make_user_book(book_id=200, status_id=2)
+
+        result = self._call(
+            book_ids=[1, 2],
+            identifiers={
+                1: {"hardcover": "100"},
+                2: {"hardcover": "200"},
+            },
+            resolved_books={
+                "100": Book(id=100, title="Book A", slug="book-a"),
+                "200": Book(id=200, title="Book B", slug="book-b"),
+            },
+            calibre_titles={1: "Book A", 2: "Book B"},
+            calibre_values={
+                (1, "#status"): "Read",
+                (2, "#status"): "Read",
+            },
+            user_books={100: hc_book_a, 200: hc_book_b},
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+            },
+        )
+        assert result.linked_count == 2
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 2
+
+    def test_books_with_changes_count(self):
+        """books_with_changes counts unique books, not total changes."""
+        hc_user_book = self._make_user_book(status_id=1, rating=2.0)
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+                "rating_column": "rating",
+            },
+            calibre_values={
+                (1, "#status"): "Read",
+                (1, "rating"): 10,  # 5.0 != 2.0
+            },
+            user_books={100: hc_user_book},
+        )
+        assert result.books_with_changes == 1
+        assert len(result.changes) == 2
+
+    def test_no_changes_no_book_count(self):
+        """books_with_changes is 0 when no changes detected."""
+        hc_user_book = self._make_user_book(status_id=3)
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#status"): "Read"},
+            user_books={100: hc_user_book},
+        )
+        assert result.books_with_changes == 0
+        assert len(result.changes) == 0
+
+    def test_api_error_during_user_book_fetch(self):
+        """API errors during get_user_book are counted."""
+
+        def failing_get_user_book(hc_book_id):
+            raise RuntimeError("API timeout")
+
+        result = find_sync_to_changes(
+            book_ids=[1],
+            get_identifiers=lambda bid: {"hardcover": "100"},
+            get_calibre_value=lambda bid, col: None,
+            get_calibre_title=lambda bid: "Test",
+            resolve_book=lambda s: self._make_book(),
+            get_user_book=failing_get_user_book,
+            prefs={"status_column": "", "status_mappings": {}},
+        )
+        assert result.api_errors == 1
+        assert result.linked_count == 1
+
+    def test_on_progress_callback(self):
+        """on_progress callback is called for each book."""
+        progress_calls = []
+        self._call(
+            book_ids=[1, 2, 3],
+            identifiers={
+                1: {"hardcover": "100"},
+                2: {},
+                3: {"hardcover": "300"},
+            },
+            resolved_books={
+                "100": self._make_book(100),
+                "300": Book(id=300, title="Book C", slug="book-c"),
+            },
+            on_progress=lambda i: progress_calls.append(i),
+        )
+        assert progress_calls == [1, 2, 3]
+
+    def test_hardcover_data_stored(self):
+        """User book data is stored in result.hardcover_data."""
+        hc_user_book = self._make_user_book()
+        result = self._call(
+            user_books={100: hc_user_book},
+        )
+        assert 100 in result.hardcover_data
+        assert result.hardcover_data[100] == hc_user_book
+
+    def test_status_column_not_configured_skips_status(self):
+        """When status_column is empty, status comparison is skipped."""
+        hc_user_book = self._make_user_book(status_id=1)
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#status"): "Read"},
+            user_books={100: hc_user_book},
+        )
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 0
+
+    def test_status_direct_match_fallback(self):
+        """Status uses STATUS_IDS direct match when custom mapping fails."""
+        hc_user_book = self._make_user_book(status_id=1)  # Want to Read
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},  # no custom mappings
+            },
+            # "Read" maps to status_id 3 via STATUS_IDS
+            calibre_values={(1, "#status"): "Read"},
+            user_books={100: hc_user_book},
+        )
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 1
+
+    def test_unmapped_calibre_status_skipped(self):
+        """Status with unknown Calibre value that doesn't map is skipped."""
+        hc_user_book = self._make_user_book(status_id=3)
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#status"): "Totally Unknown Status"},
+            user_books={100: hc_user_book},
+        )
+        # The Calibre value "Totally Unknown Status" doesn't map to any HC status
+        # so no status change is produced
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 0
+
+    def test_rating_column_with_custom_metadata(self):
+        """Rating uses column metadata for conversion."""
+        hc_user_book = self._make_user_book(rating=3.0)
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "rating_column": "#myrating",
+            },
+            calibre_values={(1, "#myrating"): 8},  # custom rating column
+            user_books={100: hc_user_book},
+            column_metadata={"#myrating": {"datatype": "rating"}},
+        )
+        rating_changes = [c for c in result.changes if c.field == "rating"]
+        assert len(rating_changes) == 1
+        assert rating_changes[0].api_value == 4.0  # 8/2 = 4.0
+
+    def test_sync_to_change_has_user_book_id(self):
+        """SyncToChange includes the user_book_id from HC."""
+        hc_user_book = self._make_user_book(status_id=1)
+        hc_user_book.id = 42
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#status"): "Read"},
+            user_books={100: hc_user_book},
+        )
+        assert len(result.changes) >= 1
+        assert result.changes[0].user_book_id == 42
+
+    def test_no_user_book_yields_none_user_book_id(self):
+        """SyncToChange has user_book_id=None when book not in HC library."""
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#status"): "Read"},
+            user_books={},  # no user book on HC
+        )
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 1
+        assert status_changes[0].user_book_id is None
