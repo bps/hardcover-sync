@@ -8,6 +8,7 @@ This module provides functions to match Calibre books to Hardcover books:
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 from .api import HardcoverAPI
 from .cache import get_cache
@@ -24,7 +25,7 @@ class MatchResult:
     message: str
 
 
-def get_calibre_book_identifiers(db, book_id: int) -> dict[str, str]:
+def get_calibre_book_identifiers(db: Any, book_id: int) -> dict[str, str]:
     """
     Get all identifiers for a Calibre book.
 
@@ -38,7 +39,7 @@ def get_calibre_book_identifiers(db, book_id: int) -> dict[str, str]:
     return db.field_for("identifiers", book_id) or {}
 
 
-def get_calibre_book_isbn(db, book_id: int) -> str | None:
+def get_calibre_book_isbn(db: Any, book_id: int) -> str | None:
     """
     Get the ISBN for a Calibre book.
 
@@ -53,24 +54,15 @@ def get_calibre_book_isbn(db, book_id: int) -> str | None:
     """
     identifiers = get_calibre_book_identifiers(db, book_id)
 
-    # Try ISBN-13 first
-    isbn = identifiers.get("isbn")
-    if isbn:
-        return isbn
-
-    # Some books might have isbn13 or isbn10 specifically
-    isbn = identifiers.get("isbn13")
-    if isbn:
-        return isbn
-
-    isbn = identifiers.get("isbn10")
-    if isbn:
-        return isbn
+    for key in ("isbn", "isbn13", "isbn10"):
+        isbn = identifiers.get(key)
+        if isbn:
+            return isbn
 
     return None
 
 
-def get_hardcover_slug(db, book_id: int) -> str | None:
+def get_hardcover_slug(db: Any, book_id: int) -> str | None:
     """
     Get the Hardcover slug for a Calibre book.
 
@@ -84,14 +76,10 @@ def get_hardcover_slug(db, book_id: int) -> str | None:
     Returns:
         Hardcover slug (or legacy numeric ID string) if linked, None otherwise.
     """
-    identifiers = get_calibre_book_identifiers(db, book_id)
-    hc_val = identifiers.get("hardcover")
-    if hc_val:
-        return hc_val
-    return None
+    return get_calibre_book_identifiers(db, book_id).get("hardcover") or None
 
 
-def get_hardcover_edition_id(db, book_id: int) -> int | None:
+def get_hardcover_edition_id(db: Any, book_id: int) -> int | None:
     """
     Get the Hardcover edition ID for a Calibre book.
 
@@ -143,11 +131,11 @@ def resolve_hardcover_book(api: HardcoverAPI, slug_or_id: str) -> Book | None:
 
 
 def set_hardcover_slug(
-    db,
+    db: Any,
     book_id: int,
     slug: str,
     edition_id: int | None = None,
-):
+) -> None:
     """
     Set the Hardcover slug for a Calibre book.
 
@@ -168,7 +156,7 @@ def set_hardcover_slug(
     db.set_field("identifiers", {book_id: identifiers})
 
 
-def remove_hardcover_link(db, book_id: int):
+def remove_hardcover_link(db: Any, book_id: int) -> None:
     """
     Remove the Hardcover identifiers from a Calibre book.
 
@@ -354,7 +342,7 @@ def _format_book_description(book: Book) -> str:
 
 def match_calibre_book(
     api: HardcoverAPI,
-    db,
+    db: Any,
     book_id: int,
 ) -> MatchResult:
     """
@@ -415,7 +403,7 @@ def match_calibre_book(
 
 def search_for_calibre_book(
     api: HardcoverAPI,
-    db,
+    db: Any,
     book_id: int,
 ) -> list[MatchResult]:
     """
