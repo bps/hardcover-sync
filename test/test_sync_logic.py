@@ -1225,3 +1225,21 @@ class TestCoerceValueForColumn:
     def test_unknown_datatype_passthrough(self):
         """Unknown datatype passes through unchanged."""
         assert coerce_value_for_column("something", "enumeration") == "something"
+
+    # --- Bool coercion for non-string, non-bool ---
+
+    def test_bool_int_truthy(self):
+        """Integer 1 coerces to True via bool()."""
+        assert coerce_value_for_column(1, "bool") is True
+
+    def test_bool_int_falsy(self):
+        """Integer 0 coerces to False via bool()."""
+        assert coerce_value_for_column(0, "bool") is False
+
+    def test_bool_nonempty_list(self):
+        """Non-empty list coerces to True via bool()."""
+        assert coerce_value_for_column([1], "bool") is True
+
+    def test_bool_empty_list(self):
+        """Empty list coerces to False via bool()."""
+        assert coerce_value_for_column([], "bool") is False

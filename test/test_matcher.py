@@ -703,3 +703,105 @@ class TestMatchByISBNEdgeCases:
         assert result.book is not None
         # Should cache with None edition_id
         mock_cache.set_isbn.assert_called_once_with("9780123456789", 789, None, "Found Book")
+
+
+# =============================================================================
+# Coverage Gap Tests
+# =============================================================================
+
+
+class TestResolveHardcoverBook:
+    """Tests for the resolve_hardcover_book function."""
+
+    def test_slug_lookup_succeeds(self):
+        """When get_book_by_slug returns a book, return it immediately."""
+        from hardcover_sync.matcher import resolve_hardcover_book
+
+        mock_api = MagicMock()
+        mock_api.get_book_by_slug.return_value = Book(id=1, title="Test", slug="test")
+
+        result = resolve_hardcover_book(mock_api, "test")
+
+        assert result is not None
+        assert result.id == 1
+        mock_api.get_book_by_id.assert_not_called()
+
+    def test_numeric_id_fallback_succeeds(self):
+        """When slug lookup fails but numeric ID lookup succeeds, return the book."""
+        from hardcover_sync.matcher import resolve_hardcover_book
+
+        mock_api = MagicMock()
+        mock_api.get_book_by_slug.return_value = None
+        mock_api.get_book_by_id.return_value = Book(id=42, title="Legacy", slug="legacy")
+
+        result = resolve_hardcover_book(mock_api, "42")
+
+        assert result is not None
+        assert result.id == 42
+
+    def test_numeric_id_fallback_also_fails(self):
+        """When both slug and numeric ID lookups fail, return None."""
+        from hardcover_sync.matcher import resolve_hardcover_book
+
+        mock_api = MagicMock()
+        mock_api.get_book_by_slug.return_value = None
+        mock_api.get_book_by_id.return_value = None
+
+        result = resolve_hardcover_book(mock_api, "999")
+
+        assert result is None
+
+    def test_non_numeric_slug_no_id_fallback(self):
+        """When slug is not numeric and slug lookup fails, return None without ID lookup."""
+        from hardcover_sync.matcher import resolve_hardcover_book
+
+        mock_api = MagicMock()
+        mock_api.get_book_by_slug.return_value = None
+
+        result = resolve_hardcover_book(mock_api, "some-slug")
+
+        assert result is None
+        mock_api.get_book_by_id.assert_not_called()
+
+
+class TestMatchCalibreBookLowConfidence:
+    """Test match_calibre_book returning a low-confidence search result."""
+
+    @patch("hardcover_sync.matcher.get_cache")
+    def test_low_confidence_search_result(self, mock_get_cache):
+        """When search returns a weakly-matching book, return it with low confidence."""
+        mock_cache = MagicMock()
+        mock_cache.get_by_isbn.return_value = None
+        mock_get_cache.return_value = mock_cache
+
+        mock_db = MagicMock()
+
+        def field_for_side_effect(field, book_id):
+            if field == "identifiers":
+                return {}
+            elif field == "title":
+                return "My Unique Title"
+            elif field == "authors":
+                return ["Some Author"]
+            return None
+
+        mock_db.field_for.side_effect = field_for_side_effect
+
+        # Return a book with a very different title so confidence is low
+        mock_api = MagicMock()
+        mock_api.find_book_by_isbn.return_value = None
+        mock_api.search_books.return_value = [
+            Book(
+                id=100,
+                title="Completely Different Book",
+                slug="completely-different",
+                authors=[Author(id=1, name="Other Person")],
+            )
+        ]
+
+        result = match_calibre_book(mock_api, mock_db, 1)
+
+        assert result.book is not None
+        assert result.book.id == 100
+        assert result.match_type == "search"
+        assert result.confidence < 0.7

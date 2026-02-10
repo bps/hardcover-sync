@@ -109,20 +109,6 @@ class TestAPIListMethods:
         assert lst.description is None
         assert lst.books_count == 0
 
-    def test_user_book_has_progress_fields(self):
-        """Test that UserBook has progress-related fields."""
-        from hardcover_sync.models import UserBook
-
-        ub = UserBook(
-            id=1,
-            book_id=100,
-            progress=0.5,
-            progress_pages=150,
-        )
-
-        assert ub.progress == 0.5
-        assert ub.progress_pages == 150
-
 
 # =============================================================================
 # Test API dry-run for list operations

@@ -392,3 +392,144 @@ class TestCacheEdgeCases:
         cache._library_cache = {}
 
         assert not cache.is_library_cached()
+
+
+# =============================================================================
+# Coverage Gap Tests
+# =============================================================================
+
+
+class TestLoadCacheNullDb:
+    """Test _load_cache early return when db is None."""
+
+    def test_load_cache_with_none_db(self):
+        """Cache remains empty when db is None."""
+        cache = HardcoverCache(db=None)
+        assert cache.get_by_isbn("9780123456789") is None
+        assert not cache.is_library_cached()
+
+
+class TestLoadCacheFromDatabase:
+    """Test _load_cache loading from database prefs."""
+
+    def test_load_cache_from_db_prefs(self):
+        """Cache loads ISBN and library data from database prefs."""
+        import sys
+        from types import ModuleType
+        from unittest.mock import patch
+
+        isbn_cached_at = datetime.now().isoformat()
+        library_cached_at = datetime.now().isoformat()
+        cache_data = {
+            "isbn_cache": {
+                "9780123456789": {
+                    "hardcover_id": 100,
+                    "edition_id": 200,
+                    "title": "Test Book",
+                    "cached_at": isbn_cached_at,
+                },
+            },
+            "library_cache": {
+                "cached_at": library_cached_at,
+                "books": {"1": {"book_id": 1, "status_id": 3}},
+            },
+        }
+
+        # Create a fake calibre.utils.serialize module
+        fake_serialize = ModuleType("calibre.utils.serialize")
+        fake_serialize.json_loads = lambda data: cache_data  # type: ignore[attr-defined]
+
+        mock_db = MagicMock()
+        mock_db.new_api.pref.return_value = b"serialized"
+
+        with patch.dict(
+            sys.modules,
+            {
+                "calibre": ModuleType("calibre"),
+                "calibre.utils": ModuleType("calibre.utils"),
+                "calibre.utils.serialize": fake_serialize,
+            },
+        ):
+            cache = HardcoverCache()
+            cache.set_database(mock_db)
+
+        assert cache.get_by_isbn("9780123456789") is not None
+        assert cache.get_by_isbn("9780123456789").hardcover_id == 100
+        assert cache.is_library_cached()
+        assert cache.get_library_book(1) is not None
+
+    def test_load_cache_from_db_prefs_none_data(self):
+        """When pref returns None, caches remain empty."""
+        mock_db = MagicMock()
+        mock_db.new_api.pref.return_value = None
+
+        cache = HardcoverCache(db=mock_db)
+
+        assert cache.get_by_isbn("9780123456789") is None
+        assert not cache.is_library_cached()
+
+
+class TestSaveCache:
+    """Test _save_cache serialization and persistence."""
+
+    def test_save_cache_happy_path(self):
+        """Cache is serialized and saved to DB prefs."""
+        import sys
+        from types import ModuleType
+        from unittest.mock import patch
+
+        mock_db = MagicMock()
+        mock_db.new_api.pref.return_value = None
+
+        cache = HardcoverCache(db=mock_db)
+        cache.set_isbn("9780123456789", 100, 200, "Test Book")
+
+        fake_serialize = ModuleType("calibre.utils.serialize")
+        fake_serialize.json_dumps = MagicMock(return_value=b"serialized")  # type: ignore[attr-defined]
+
+        with patch.dict(
+            sys.modules,
+            {
+                "calibre": ModuleType("calibre"),
+                "calibre.utils": ModuleType("calibre.utils"),
+                "calibre.utils.serialize": fake_serialize,
+            },
+        ):
+            cache._save_cache()
+
+        fake_serialize.json_dumps.assert_called_once()
+        mock_db.new_api.set_pref.assert_called_once_with("hardcover_sync_cache", b"serialized")
+
+    def test_save_cache_error_does_not_propagate(self):
+        """If set_pref raises, the error is silently swallowed."""
+        import sys
+        from types import ModuleType
+        from unittest.mock import patch
+
+        mock_db = MagicMock()
+        mock_db.new_api.pref.return_value = None
+
+        cache = HardcoverCache(db=mock_db)
+        cache.set_isbn("9780123456789", 100, 200, "Test Book")
+
+        fake_serialize = ModuleType("calibre.utils.serialize")
+        fake_serialize.json_dumps = MagicMock(return_value=b"serialized")  # type: ignore[attr-defined]
+
+        mock_db.new_api.set_pref.side_effect = RuntimeError("disk full")
+
+        with patch.dict(
+            sys.modules,
+            {
+                "calibre": ModuleType("calibre"),
+                "calibre.utils": ModuleType("calibre.utils"),
+                "calibre.utils.serialize": fake_serialize,
+            },
+        ):
+            # Should not raise
+            cache._save_cache()
+
+    def test_save_cache_skipped_when_no_db(self):
+        """_save_cache returns early when db is None."""
+        cache = HardcoverCache(db=None)
+        # Should not raise
+        cache._save_cache()

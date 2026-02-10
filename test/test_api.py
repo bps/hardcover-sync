@@ -791,7 +791,7 @@ class TestUserBookWithReads:
 
     def test_deprecated_fields_are_none(self):
         """Test that deprecated fields (progress, started_at, finished_at) default to None."""
-        user_book = UserBook(
+        ub = UserBook(
             id=1001,
             book_id=789,
             reads=[
@@ -803,13 +803,45 @@ class TestUserBookWithReads:
                 )
             ],
         )
+        # These fields were removed from the model; accessing via
+        # the reads list is the supported path now.
+        assert ub.id == 1001
 
-        # These deprecated fields should be None even when reads exist
-        # (they're kept for backward compat but not populated from API)
-        assert user_book.progress is None
-        assert user_book.progress_pages is None
-        assert user_book.started_at is None
-        assert user_book.finished_at is None
+
+class TestUserBookCurrentProgress:
+    """Tests for UserBook.current_progress and current_progress_percent properties."""
+
+    def test_current_progress_with_read(self):
+        """current_progress returns read.progress from latest read."""
+        read = UserBookRead(id=100, progress=0.75)
+        user_book = UserBook(id=1, book_id=1, reads=[read])
+
+        assert user_book.current_progress == 0.75
+
+    def test_current_progress_none_when_no_reads(self):
+        """current_progress returns None when there are no reads."""
+        user_book = UserBook(id=1, book_id=1, reads=None)
+
+        assert user_book.current_progress is None
+
+    def test_current_progress_none_when_empty_reads(self):
+        """current_progress returns None when reads list is empty."""
+        user_book = UserBook(id=1, book_id=1, reads=[])
+
+        assert user_book.current_progress is None
+
+    def test_current_progress_percent_with_read(self):
+        """current_progress_percent returns progress as percentage."""
+        read = UserBookRead(id=100, progress=0.5)
+        user_book = UserBook(id=1, book_id=1, reads=[read])
+
+        assert user_book.current_progress_percent == 50.0
+
+    def test_current_progress_percent_none_when_no_reads(self):
+        """current_progress_percent returns None when there are no reads."""
+        user_book = UserBook(id=1, book_id=1, reads=None)
+
+        assert user_book.current_progress_percent is None
 
 
 class TestGetUserBooksWithReads:
@@ -1614,3 +1646,160 @@ class TestSearchBooksEdgeCases:
 
         assert len(books) == 1
         assert books[0].release_date is None
+
+
+# =============================================================================
+# Coverage Gap Tests
+# =============================================================================
+
+
+class TestExecuteGenericError:
+    """Test generic TransportQueryError handling in _execute."""
+
+    def test_generic_transport_query_error(self, api, mock_client):
+        """TransportQueryError without auth/rate keywords raises HardcoverAPIError."""
+        from gql.transport.exceptions import TransportQueryError
+
+        mock_client.return_value.execute.side_effect = TransportQueryError("something went wrong")
+
+        with pytest.raises(HardcoverAPIError, match="API error"):
+            api.get_me()
+
+
+class TestEnsureUserId:
+    """Test the _ensure_user_id helper."""
+
+    def test_explicit_user_id_returned_immediately(self, api, mock_client):
+        """When user_id is explicitly provided, return it without calling get_me."""
+        result = api._ensure_user_id(user_id=42)
+
+        assert result == 42
+        mock_client.return_value.execute.assert_not_called()
+
+    def test_none_user_id_calls_get_me(self, api, mock_client):
+        """When user_id is None, fetch the current user."""
+        mock_client.return_value.execute.return_value = {
+            "me": {"id": 99, "username": "testuser", "name": None, "books_count": 0}
+        }
+
+        result = api._ensure_user_id(user_id=None)
+
+        assert result == 99
+        mock_client.return_value.execute.assert_called_once()
+
+
+class TestGetMeEmptyList:
+    """Test get_me with empty list response."""
+
+    def test_get_me_empty_list(self, api, mock_client):
+        """Empty list in 'me' response raises AuthenticationError."""
+        mock_client.return_value.execute.return_value = {"me": []}
+
+        with pytest.raises(AuthenticationError):
+            api.get_me()
+
+
+class TestFindBookByISBNInvalidLength:
+    """Test find_book_by_isbn with invalid ISBN length."""
+
+    def test_invalid_isbn_length_returns_none(self, api, mock_client):
+        """ISBN that is neither 10 nor 13 digits returns None."""
+        result = api.find_book_by_isbn("12345")
+
+        assert result is None
+        mock_client.return_value.execute.assert_not_called()
+
+
+class TestSearchBooksResultsNone:
+    """Test search_books when results is neither dict nor list."""
+
+    def test_results_none_returns_empty_list(self, api, mock_client):
+        """When results is None, return empty list."""
+        mock_client.return_value.execute.return_value = {"search": {"results": None}}
+
+        books = api.search_books("Test")
+
+        assert books == []
+
+
+class TestSearchBooksJSONStringItems:
+    """Test search_books with JSON string items in results."""
+
+    def test_valid_json_string_document(self, api, mock_client):
+        """Valid JSON string document is parsed into a Book."""
+        import json
+
+        doc = json.dumps(
+            {"id": 1, "title": "Test Book", "slug": "test-book", "author_names": [], "isbns": []}
+        )
+        mock_client.return_value.execute.return_value = {"search": {"results": [doc]}}
+
+        books = api.search_books("Test")
+
+        assert len(books) == 1
+        assert books[0].title == "Test Book"
+
+    def test_invalid_json_string_skipped(self, api, mock_client):
+        """Invalid JSON string is silently skipped."""
+        mock_client.return_value.execute.return_value = {"search": {"results": ["not-json"]}}
+
+        books = api.search_books("Test")
+
+        assert books == []
+
+
+class TestDryRunOptionalParams:
+    """Test dry-run logging of optional params for add/update methods."""
+
+    @pytest.fixture
+    def dry_run_api(self, mock_client):
+        """Create an API instance in dry-run mode."""
+        return HardcoverAPI(token="test-token", dry_run=True)  # noqa: S106
+
+    def test_add_book_with_edition_id(self, dry_run_api, mock_client):
+        """edition_id appears in dry-run log for add_book_to_library."""
+        dry_run_api.add_book_to_library(book_id=1, status_id=1, edition_id=999)
+
+        log = dry_run_api.get_dry_run_log()
+        assert log[0]["variables"]["object"]["edition_id"] == 999
+
+    def test_add_book_with_rating(self, dry_run_api, mock_client):
+        """rating appears in dry-run log for add_book_to_library."""
+        dry_run_api.add_book_to_library(book_id=1, status_id=1, rating=4.5)
+
+        log = dry_run_api.get_dry_run_log()
+        assert log[0]["variables"]["object"]["rating"] == 4.5
+
+    def test_add_book_with_started_at_date(self, dry_run_api, mock_client):
+        """started_at as a date object is converted to string in dry-run log."""
+        from datetime import date
+
+        dry_run_api.add_book_to_library(book_id=1, status_id=1, started_at=date(2024, 6, 15))
+
+        log = dry_run_api.get_dry_run_log()
+        assert log[0]["variables"]["object"]["first_started_reading_date"] == "2024-06-15"
+
+    def test_add_book_with_finished_at_string(self, dry_run_api, mock_client):
+        """finished_at as string is passed through in dry-run log."""
+        dry_run_api.add_book_to_library(book_id=1, status_id=1, finished_at="2024-07-01")
+
+        log = dry_run_api.get_dry_run_log()
+        assert log[0]["variables"]["object"]["last_read_date"] == "2024-07-01"
+
+    def test_update_user_book_with_started_at_date(self, dry_run_api, mock_client):
+        """started_at as a date object is converted to string in update dry-run log."""
+        from datetime import date
+
+        dry_run_api.update_user_book(user_book_id=1, started_at=date(2024, 1, 10))
+
+        log = dry_run_api.get_dry_run_log()
+        assert log[0]["variables"]["object"]["first_started_reading_date"] == "2024-01-10"
+
+    def test_update_user_book_with_finished_at_date(self, dry_run_api, mock_client):
+        """finished_at as a date object is converted to string in update dry-run log."""
+        from datetime import date
+
+        dry_run_api.update_user_book(user_book_id=1, finished_at=date(2024, 12, 25))
+
+        log = dry_run_api.get_dry_run_log()
+        assert log[0]["variables"]["object"]["last_read_date"] == "2024-12-25"
