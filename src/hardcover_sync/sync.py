@@ -6,11 +6,11 @@ Hardcover and Calibre, extracted from the dialog classes for testability.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .models import UserBook
-from .config import READING_STATUSES, STATUS_IDS
+from .config import READING_STATUSES, STATUS_IDS, get_column_mappings
 
 
 # Display names for sync field types
@@ -26,16 +26,45 @@ FIELD_DISPLAY_NAMES = {
 }
 
 
+def truncate_for_display(text: str | None, *, max_length: int = 50, empty: str = "(empty)") -> str:
+    """Truncate text for display in change previews.
+
+    Args:
+        text: The text to truncate, or None.
+        max_length: Maximum length before truncation.
+        empty: Placeholder when text is falsy.
+
+    Returns:
+        The truncated text with "..." suffix, or the empty placeholder.
+    """
+    if not text:
+        return empty
+    if len(text) > max_length:
+        return text[:max_length] + "..."
+    return text
+
+
 @dataclass
-class SyncChange:
-    """Represents a change to be synced from Hardcover to Calibre."""
+class BaseSyncChange:
+    """Shared fields for sync change dataclasses."""
 
     calibre_id: int
     calibre_title: str
     hardcover_book_id: int
     field: str  # status, rating, progress, progress_percent, date_started, date_read, review
-    old_value: str | None  # Display value (e.g., stars for rating)
-    new_value: str | None  # Display value (e.g., stars for rating)
+    old_value: str | None
+    new_value: str | None
+
+    @property
+    def display_field(self) -> str:
+        """Get a display-friendly field name."""
+        return FIELD_DISPLAY_NAMES.get(self.field, self.field)
+
+
+@dataclass
+class SyncChange(BaseSyncChange):
+    """Represents a change to be synced from Hardcover to Calibre."""
+
     raw_value: str | None = None  # Raw value for applying (if different from display)
     apply: bool = True  # Whether to apply this change
     hardcover_slug: str | None = None  # Slug for identifier storage
@@ -45,30 +74,14 @@ class SyncChange:
         """Get the value to apply to Calibre."""
         return self.raw_value if self.raw_value is not None else self.new_value
 
-    @property
-    def display_field(self) -> str:
-        """Get a display-friendly field name."""
-        return FIELD_DISPLAY_NAMES.get(self.field, self.field)
-
 
 @dataclass
-class SyncToChange:
+class SyncToChange(BaseSyncChange):
     """Represents a change to be synced from Calibre to Hardcover."""
 
-    calibre_id: int
-    calibre_title: str
-    hardcover_book_id: int
-    user_book_id: int | None  # None if book not in Hardcover library
-    field: str  # status, rating, progress, progress_percent, date_started, date_read, review
-    old_value: str | None
-    new_value: str | None
+    user_book_id: int | None = None  # None if book not in Hardcover library
     api_value: Any = None  # The value to send to the API
     apply: bool = True
-
-    @property
-    def display_field(self) -> str:
-        """Get a display-friendly field name."""
-        return FIELD_DISPLAY_NAMES.get(self.field, self.field)
 
 
 @dataclass
@@ -115,6 +128,21 @@ def format_rating_as_stars(rating: float | None) -> str:
     return result or "☆☆☆☆☆"
 
 
+def _is_calibre_rating_column(column_name: str, column_metadata: dict | None = None) -> bool:
+    """Check if a Calibre column uses the built-in 0-10 rating scale.
+
+    This is true for the built-in ``rating`` column and for custom columns
+    whose ``datatype`` is ``"rating"``.
+    """
+    if column_name == "rating":
+        return True
+    return bool(
+        column_name.startswith("#")
+        and column_metadata
+        and column_metadata.get("datatype") == "rating"
+    )
+
+
 def convert_rating_to_calibre(
     hc_rating: float,
     column_name: str,
@@ -131,19 +159,11 @@ def convert_rating_to_calibre(
     Returns:
         Tuple of (raw_value_string, display_rating_for_stars).
     """
-    if column_name == "rating":
-        # Built-in rating is 0-10 (displayed as stars)
+    if _is_calibre_rating_column(column_name, column_metadata):
+        # Rating columns use 0-10 internally (displayed as stars)
         return str(int(hc_rating * 2)), hc_rating
-    elif column_name.startswith("#"):
-        # Custom column - check if it's a rating type
-        if column_metadata and column_metadata.get("datatype") == "rating":
-            # Custom rating columns also use 0-10 internally
-            return str(int(hc_rating * 2)), hc_rating
-        else:
-            # Other column types (int, float) - store as 0-5
-            return str(hc_rating), hc_rating
-    else:
-        return str(hc_rating), hc_rating
+    # Other column types (int, float) - store as 0-5
+    return str(hc_rating), hc_rating
 
 
 def convert_rating_from_calibre(
@@ -170,18 +190,10 @@ def convert_rating_from_calibre(
     except (ValueError, TypeError):
         return None
 
-    if column_name == "rating":
-        # Built-in rating is 0-10, convert to 0-5
+    if _is_calibre_rating_column(column_name, column_metadata):
+        # Rating columns use 0-10, convert to 0-5
         return rating / 2
-    elif column_name.startswith("#"):
-        if column_metadata and column_metadata.get("datatype") == "rating":
-            # Custom rating columns also use 0-10
-            return rating / 2
-        else:
-            # Assume 0-5 scale
-            return rating
-    else:
-        return rating
+    return rating
 
 
 def get_status_from_hardcover(status_id: int, status_mappings: dict) -> str | None:
@@ -275,14 +287,15 @@ def find_sync_from_changes(
     changes = []
 
     # Get column mappings
-    status_col = prefs.get("status_column", "")
-    rating_col = prefs.get("rating_column", "")
-    progress_col = prefs.get("progress_column", "")
-    progress_percent_col = prefs.get("progress_percent_column", "")
-    date_started_col = prefs.get("date_started_column", "")
-    date_read_col = prefs.get("date_read_column", "")
-    is_read_col = prefs.get("is_read_column", "")
-    review_col = prefs.get("review_column", "")
+    col = get_column_mappings(prefs)
+    status_col = col.get("status", "")
+    rating_col = col.get("rating", "")
+    progress_col = col.get("progress", "")
+    progress_percent_col = col.get("progress_percent", "")
+    date_started_col = col.get("date_started", "")
+    date_read_col = col.get("date_read", "")
+    is_read_col = col.get("is_read", "")
+    review_col = col.get("review", "")
 
     # Get sync options
     sync_rating = prefs.get("sync_rating", True)
@@ -444,16 +457,285 @@ def find_sync_from_changes(
                         calibre_title=calibre_title,
                         hardcover_book_id=hc_book.book_id,
                         field="review",
-                        old_value=(current[:50] + "...")
-                        if current and len(current) > 50
-                        else (current or "(empty)"),
-                        new_value=(hc_book.review[:50] + "...")
-                        if len(hc_book.review) > 50
-                        else hc_book.review,
+                        old_value=truncate_for_display(current),
+                        new_value=truncate_for_display(hc_book.review),
                     )
                 )
 
     return changes
+
+
+@dataclass
+class SyncToResult:
+    """Result of analyzing books for sync-to-Hardcover changes.
+
+    Attributes:
+        changes: List of SyncToChange objects representing needed updates.
+        hardcover_data: Mapping of Hardcover book ID -> UserBook for apply phase.
+        linked_count: Number of books that were linked to Hardcover.
+        not_linked_count: Number of books skipped (not linked).
+        api_errors: Number of API errors encountered.
+        books_with_changes: Number of books that had at least one change.
+    """
+
+    changes: list[SyncToChange] = field(default_factory=list)
+    hardcover_data: dict[int, UserBook] = field(default_factory=dict)
+    linked_count: int = 0
+    not_linked_count: int = 0
+    api_errors: int = 0
+    books_with_changes: int = 0
+
+
+def find_sync_to_changes(
+    book_ids: list[int],
+    get_identifiers: Callable[[int], dict[str, str]],
+    get_calibre_value: Callable[[int, str], Any],
+    get_calibre_title: Callable[[int], str],
+    resolve_book: Callable[[str], Any],
+    get_user_book: Callable[[int], UserBook | None],
+    prefs: dict,
+    get_column_metadata: Callable[[str], dict | None] | None = None,
+    on_progress: Callable[[int], None] | None = None,
+) -> SyncToResult:
+    """
+    Find all changes to sync from Calibre to Hardcover.
+
+    This is the sync-to counterpart of find_sync_from_changes(). It compares
+    Calibre column values against Hardcover data and produces SyncToChange
+    objects for each difference found.
+
+    Args:
+        book_ids: List of Calibre book IDs to analyze.
+        get_identifiers: Function(calibre_id) -> identifiers dict.
+        get_calibre_value: Function(calibre_id, column) -> value.
+        get_calibre_title: Function(calibre_id) -> title string.
+        resolve_book: Function(slug_or_id) -> Book | None.
+        get_user_book: Function(hardcover_book_id) -> UserBook | None.
+        prefs: Plugin preferences dict.
+        get_column_metadata: Optional function(column) -> metadata dict.
+        on_progress: Optional callback(index) called after each book is processed.
+
+    Returns:
+        SyncToResult with changes, hardcover_data, and statistics.
+    """
+    result = SyncToResult()
+
+    # Get column mappings
+    col = get_column_mappings(prefs)
+    status_col = col.get("status", "")
+    rating_col = col.get("rating", "")
+    progress_col = col.get("progress", "")
+    progress_percent_col = col.get("progress_percent", "")
+    date_started_col = col.get("date_started", "")
+    date_read_col = col.get("date_read", "")
+    review_col = col.get("review", "")
+
+    # Get status mappings (reverse: Calibre value -> Hardcover ID)
+    status_mappings = prefs.get("status_mappings", {})
+    calibre_to_hc_status = {v: int(k) for k, v in status_mappings.items()}
+
+    for i, book_id in enumerate(book_ids):
+        if on_progress:
+            on_progress(i + 1)
+
+        # Check if book is linked to Hardcover
+        identifiers = get_identifiers(book_id)
+        hc_id_str = identifiers.get("hardcover")
+        if not hc_id_str:
+            result.not_linked_count += 1
+            continue
+
+        hc_book = resolve_book(hc_id_str)
+        if not hc_book:
+            result.not_linked_count += 1
+            continue
+        hc_book_id = hc_book.id
+
+        result.linked_count += 1
+        calibre_title = get_calibre_title(book_id)
+
+        # Fetch current Hardcover data for this book
+        hc_user_book: UserBook | None = None
+        try:
+            hc_user_book = get_user_book(hc_book_id)
+            if hc_user_book:
+                result.hardcover_data[hc_book_id] = hc_user_book
+        except Exception:  # noqa: S110
+            result.api_errors += 1
+
+        user_book_id = hc_user_book.id if hc_user_book else None
+
+        # Track if this book has any Calibre data to sync
+        book_has_changes = False
+
+        # Compare status
+        if status_col:
+            calibre_status = get_calibre_value(book_id, status_col)
+            if calibre_status:
+                hc_status_id = calibre_to_hc_status.get(calibre_status)
+                if hc_status_id is None:
+                    # Try direct match with status name
+                    hc_status_id = STATUS_IDS.get(calibre_status)
+
+                if hc_status_id:
+                    hc_current_status = (
+                        READING_STATUSES.get(hc_user_book.status_id)
+                        if hc_user_book and hc_user_book.status_id
+                        else None
+                    )
+                    if hc_current_status != calibre_status:
+                        result.changes.append(
+                            SyncToChange(
+                                calibre_id=book_id,
+                                calibre_title=calibre_title,
+                                hardcover_book_id=hc_book_id,
+                                user_book_id=user_book_id,
+                                field="status",
+                                old_value=hc_current_status or "(not in library)",
+                                new_value=calibre_status,
+                            )
+                        )
+                        book_has_changes = True
+
+        # Compare rating
+        if rating_col:
+            calibre_rating = get_calibre_value(book_id, rating_col)
+            if calibre_rating is not None:
+                # Convert Calibre rating to Hardcover scale (0-5)
+                col_info = get_column_metadata(rating_col) if get_column_metadata else None
+                hc_new_rating = convert_rating_from_calibre(calibre_rating, rating_col, col_info)
+
+                hc_current_rating = hc_user_book.rating if hc_user_book else None
+                if hc_new_rating != hc_current_rating:
+                    result.changes.append(
+                        SyncToChange(
+                            calibre_id=book_id,
+                            calibre_title=calibre_title,
+                            hardcover_book_id=hc_book_id,
+                            user_book_id=user_book_id,
+                            field="rating",
+                            old_value=format_rating_as_stars(hc_current_rating),
+                            new_value=format_rating_as_stars(hc_new_rating),
+                            api_value=hc_new_rating,
+                        )
+                    )
+                    book_has_changes = True
+
+        # Compare progress (pages)
+        if progress_col:
+            calibre_progress = get_calibre_value(book_id, progress_col)
+            if calibre_progress is not None:
+                hc_current_progress = hc_user_book.current_progress_pages if hc_user_book else None
+                if calibre_progress != hc_current_progress:
+                    result.changes.append(
+                        SyncToChange(
+                            calibre_id=book_id,
+                            calibre_title=calibre_title,
+                            hardcover_book_id=hc_book_id,
+                            user_book_id=user_book_id,
+                            field="progress",
+                            old_value=str(hc_current_progress)
+                            if hc_current_progress is not None
+                            else "(empty)",
+                            new_value=str(calibre_progress),
+                        )
+                    )
+                    book_has_changes = True
+
+        # Compare progress (percent)
+        if progress_percent_col:
+            calibre_progress_pct = get_calibre_value(book_id, progress_percent_col)
+            if calibre_progress_pct is not None:
+                hc_current_pct = hc_user_book.current_progress_percent if hc_user_book else None
+                # Round for comparison
+                calibre_rounded = round(float(calibre_progress_pct), 1)
+                hc_rounded = round(hc_current_pct, 1) if hc_current_pct is not None else None
+                if calibre_rounded != hc_rounded:
+                    result.changes.append(
+                        SyncToChange(
+                            calibre_id=book_id,
+                            calibre_title=calibre_title,
+                            hardcover_book_id=hc_book_id,
+                            user_book_id=user_book_id,
+                            field="progress_percent",
+                            old_value=f"{hc_rounded}%" if hc_rounded is not None else "(empty)",
+                            new_value=f"{calibre_rounded}%",
+                            api_value=calibre_rounded / 100,  # Convert to 0.0-1.0 for API
+                        )
+                    )
+                    book_has_changes = True
+
+        # Compare date started
+        if date_started_col:
+            calibre_date = get_calibre_value(book_id, date_started_col)
+            if calibre_date:
+                calibre_date_str = str(calibre_date)[:10]
+                hc_current_date = (
+                    hc_user_book.latest_started_at[:10]
+                    if hc_user_book and hc_user_book.latest_started_at
+                    else None
+                )
+                if calibre_date_str != hc_current_date:
+                    result.changes.append(
+                        SyncToChange(
+                            calibre_id=book_id,
+                            calibre_title=calibre_title,
+                            hardcover_book_id=hc_book_id,
+                            user_book_id=user_book_id,
+                            field="date_started",
+                            old_value=hc_current_date or "(empty)",
+                            new_value=calibre_date_str,
+                        )
+                    )
+                    book_has_changes = True
+
+        # Compare date read
+        if date_read_col:
+            calibre_date = get_calibre_value(book_id, date_read_col)
+            if calibre_date:
+                calibre_date_str = str(calibre_date)[:10]
+                hc_current_date = (
+                    hc_user_book.latest_finished_at[:10]
+                    if hc_user_book and hc_user_book.latest_finished_at
+                    else None
+                )
+                if calibre_date_str != hc_current_date:
+                    result.changes.append(
+                        SyncToChange(
+                            calibre_id=book_id,
+                            calibre_title=calibre_title,
+                            hardcover_book_id=hc_book_id,
+                            user_book_id=user_book_id,
+                            field="date_read",
+                            old_value=hc_current_date or "(empty)",
+                            new_value=calibre_date_str,
+                        )
+                    )
+                    book_has_changes = True
+
+        # Compare review
+        if review_col:
+            calibre_review = get_calibre_value(book_id, review_col)
+            if calibre_review:
+                hc_current_review = hc_user_book.review if hc_user_book else None
+                if calibre_review != hc_current_review:
+                    result.changes.append(
+                        SyncToChange(
+                            calibre_id=book_id,
+                            calibre_title=calibre_title,
+                            hardcover_book_id=hc_book_id,
+                            user_book_id=user_book_id,
+                            field="review",
+                            old_value=truncate_for_display(hc_current_review),
+                            new_value=truncate_for_display(calibre_review),
+                        )
+                    )
+                    book_has_changes = True
+
+        if book_has_changes:
+            result.books_with_changes += 1
+
+    return result
 
 
 def find_new_books(
@@ -524,7 +806,7 @@ def find_new_books(
     return new_books
 
 
-def coerce_value_for_column(value: str | bool | None, datatype: str) -> Any:
+def coerce_value_for_column(value: Any, datatype: str) -> Any:
     """Coerce a string value to the type expected by Calibre for a given column datatype.
 
     This handles the conversion from string API values (as stored in SyncChange)
