@@ -274,15 +274,17 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
                 self.hardcover_books = self._fetch_all_books(api)
                 full_hc_to_calibre = hc_to_calibre
 
-            matched_count = sum(
+            total = len(self.hardcover_books)
+            linked_count = sum(
                 1
                 for hb in self.hardcover_books
                 if (hb.book.slug if hb.book else None) in hc_to_calibre
             )
+            unlinked_count = total - linked_count
 
             self.status_label.setText(
-                f"Fetched {len(self.hardcover_books)} books from Hardcover. "
-                f"{matched_count} match linked Calibre books. Analyzing changes..."
+                f"Found {total} books in Hardcover library, "
+                f"{linked_count} linked to Calibre. Analyzing changes..."
             )
             QApplication.processEvents()
 
@@ -305,28 +307,27 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
             self._update_summary()
 
             # Detailed status message
-            unmatched_count = len(self.hardcover_books) - matched_count
             if not self.changes and not self.new_books:
-                if matched_count == 0:
+                if linked_count == 0:
                     self.status_label.setText(
-                        f"Fetched {len(self.hardcover_books)} books from Hardcover, "
-                        "but none match your linked Calibre books. "
-                        "Make sure books are linked using 'Link to Hardcover...'."
+                        f"Found {total} books in Hardcover library, "
+                        "but none are linked to Calibre books. "
+                        "Use 'Link to Hardcover...' to connect them."
                     )
                 else:
                     # Check if columns are mapped
                     unmapped = get_unmapped_columns(self.prefs)
                     if len(unmapped) == 6:  # All unmapped
                         self.status_label.setText(
-                            f"Fetched {len(self.hardcover_books)} books, "
-                            f"{matched_count} matched. <b>No columns are mapped!</b> "
-                            "Go to plugin settings to map Calibre columns to Hardcover fields."
+                            f"Found {total} Hardcover books, "
+                            f"{linked_count} linked. <b>No columns are mapped!</b> "
+                            "Go to plugin settings to map Calibre columns "
+                            "to Hardcover fields."
                         )
                     else:
                         self.status_label.setText(
-                            f"Fetched {len(self.hardcover_books)} books, "
-                            f"{matched_count} matched. No changes needed - "
-                            "Calibre is already in sync with Hardcover."
+                            f"All {linked_count} linked books are in sync "
+                            "with Hardcover. No changes needed."
                         )
             else:
                 parts = []
@@ -334,11 +335,12 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
                     parts.append(f"{len(self.changes)} change(s)")
                 if self.new_books:
                     parts.append(f"{len(self.new_books)} new book(s) to add")
-                status = (
-                    f"Found {', '.join(parts)} from {len(self.hardcover_books)} Hardcover books."
-                )
-                if unmatched_count > 0 and not self.create_books_checkbox.isChecked():
-                    status += f" ({unmatched_count} not in Calibre - check 'Add books' to include)"
+                status = f"Found {', '.join(parts)} across {linked_count} linked books."
+                if unlinked_count > 0 and not self.create_books_checkbox.isChecked():
+                    status += (
+                        f" ({unlinked_count} Hardcover book(s) not linked"
+                        " - check 'Add books' to include)"
+                    )
                 self.status_label.setText(status)
 
         except Exception as e:
@@ -348,14 +350,22 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
             self.fetch_button.setEnabled(True)
 
     def _fetch_all_books(self, api: HardcoverAPI) -> list[UserBook]:
-        """Fetch all books from the user's Hardcover library."""
-        all_books = []
+        """Fetch all books from the user's Hardcover library.
+
+        Deduplicates by book_id, keeping the most recently updated entry
+        (the API returns results ordered by updated_at desc).
+        """
+        all_books: list[UserBook] = []
+        seen_book_ids: set[int] = set()
         offset = 0
         limit = 100
 
         while True:
             batch = api.get_user_books(limit=limit, offset=offset)
-            all_books.extend(batch)
+            for ub in batch:
+                if ub.book_id not in seen_book_ids:
+                    seen_book_ids.add(ub.book_id)
+                    all_books.append(ub)
 
             if len(batch) < limit:
                 break
