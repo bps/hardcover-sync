@@ -57,8 +57,9 @@ find "$BUILD_DIR" -type f -name "*.pyo" -delete 2>/dev/null || true
 rm -rf "$BUILD_DIR/bin" 2>/dev/null || true
 rm -f "$BUILD_DIR/.lock" 2>/dev/null || true
 
-# Create dist directory
+# Create dist directory (remove old builds so the install glob picks up only the latest)
 mkdir -p "$PROJECT_DIR/dist"
+rm -f "$PROJECT_DIR/dist/${PLUGIN_NAME}"-*.zip
 
 # Create the zip file
 ZIP_NAME="${PLUGIN_NAME}-${VERSION}.zip"
