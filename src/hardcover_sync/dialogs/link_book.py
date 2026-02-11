@@ -153,15 +153,15 @@ class LinkBookDialog(QDialog):
 
         button_layout.addStretch()
 
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancel_button)
+
         self.link_button = QPushButton("Link")
         self.link_button.setEnabled(False)
         self.link_button.setDefault(True)
         self.link_button.clicked.connect(self._on_link)
         button_layout.addWidget(self.link_button)
-
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(self.cancel_button)
 
         layout.addLayout(button_layout)
 
