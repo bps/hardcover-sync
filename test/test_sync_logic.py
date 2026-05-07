@@ -743,7 +743,7 @@ class TestFindSyncFromChangesProgress:
 
         def get_value(calibre_id, col):
             if col == "progress_pct_col":
-                return 50.0  # Current is 50%, should change to 75%
+                return 0.50  # Current is 50%, should change to 75%
             return None
 
         def get_title(calibre_id):
@@ -759,8 +759,8 @@ class TestFindSyncFromChangesProgress:
 
         assert len(changes) == 1
         assert changes[0].field == "progress_percent"
-        assert "50.0%" in changes[0].old_value
-        assert "75.0%" in changes[0].new_value
+        assert "0.5%" in changes[0].old_value
+        assert "0.75%" in changes[0].new_value
 
     def test_progress_percent_empty_to_value(self):
         """Test progress percent change from empty to value."""
@@ -784,7 +784,32 @@ class TestFindSyncFromChangesProgress:
         assert len(changes) == 1
         assert changes[0].field == "progress_percent"
         assert changes[0].old_value == "(empty)"
-        assert "25.0%" in changes[0].new_value
+        assert "0.25" in changes[0].new_value
+
+    def test_progress_percent_valid(self):
+        """Test detecting progress percent changes and is a valid percentage."""
+        hc_books = [self.create_user_book_with_reads(100, progress=0.75)]  # 75%
+        hc_to_calibre = {"test-book": 1}
+
+        def get_value(calibre_id, col):
+            if col == "progress_pct_col":
+                return 50.0  # Current is 50%, should change to 75%
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "progress_percent_column": "progress_pct_col",
+            "sync_progress": True,
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        assert len(changes) == 1
+        assert changes[0].field == "progress_percent"
+        assert changes[0].raw_value == str(0.75)
 
 
 class TestFindSyncFromChangesDates:
