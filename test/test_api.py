@@ -655,6 +655,7 @@ class TestUserBookRead:
             finished_at="2024-01-30",
             progress_pages=250,
             edition_id=456,
+            progress=0.34,
         )
 
         assert read.id == 100
@@ -662,6 +663,8 @@ class TestUserBookRead:
         assert read.finished_at == "2024-01-30"
         assert read.progress_pages == 250
         assert read.edition_id == 456
+        assert read.progress == 0.34
+        assert read.progress_percent == 34
 
     def test_user_book_read_with_none_values(self):
         """Test UserBookRead with missing/None values."""

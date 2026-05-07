@@ -372,7 +372,7 @@ def find_sync_from_changes(
         current_progress_pct = hc_book.current_progress_percent
         if sync_progress and progress_percent_col and current_progress_pct is not None:
             current = get_calibre_value(calibre_id, progress_percent_col)
-            new_progress_pct = round(current_progress_pct, 1)
+            new_progress_pct = round(current_progress_pct / 100, 3)
             current_rounded = round(float(current), 1) if current else None
             if current_rounded != new_progress_pct:
                 changes.append(
