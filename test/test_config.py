@@ -208,3 +208,72 @@ class TestSyncableColumns:
         }
         unmapped = get_unmapped_columns(prefs)
         assert len(unmapped) == 0
+
+
+# =============================================================================
+# Test _get_custom_columns
+# =============================================================================
+
+
+class TestGetCustomColumns:
+    """Tests for the _get_custom_columns method."""
+
+    def test_get_custom_columns_matching_types(self):
+        """Test _get_custom_columns returns columns matching specified types."""
+        from unittest.mock import Mock
+        from hardcover_sync.config import ConfigWidget
+
+        # Create mock custom columns data
+        mock_custom_columns = {
+            "#my_text": {"datatype": "text", "name": "My Text Column"},
+            "#my_int": {"datatype": "int", "name": "My Int Column"},
+            "#my_float": {"datatype": "float", "name": "My Float Column"},
+            "#my_date": {"datatype": "datetime", "name": "My Date Column"},
+            "#my_bool": {"datatype": "bool", "name": "My Bool Column"},
+            "#my_enum": {"datatype": "enumeration", "name": "My Enum Column"},
+        }
+
+        # Create a mock plugin_action
+        mock_plugin_action = Mock()
+        mock_plugin_action.gui.library_view.model().custom_columns = mock_custom_columns
+
+        widget = ConfigWidget(plugin_action=mock_plugin_action)
+
+        # Test requesting text columns
+        result = widget._get_custom_columns(["text"])
+        assert len(result) == 1
+        assert "#my_text" in result
+        assert result["#my_text"]["datatype"] == "text"
+
+        # Test requesting multiple types
+        result = widget._get_custom_columns(["text", "int", "float"])
+        assert len(result) == 3
+        assert "#my_text" in result
+        assert "#my_int" in result
+        assert "#my_float" in result
+
+        # Test requesting types that don't match any columns
+        result = widget._get_custom_columns(["rating"])
+        assert len(result) == 0
+
+        # Test requesting all types one by one
+        for col_type in ["text", "int", "float", "datetime", "bool", "enumeration"]:
+            result = widget._get_custom_columns([col_type])
+            assert len(result) == 1
+            assert any(col["datatype"] == col_type for col in result.values())
+
+    def test_get_custom_columns_empty_types(self):
+        """Test _get_custom_columns with empty column_types list."""
+        from unittest.mock import Mock
+        from hardcover_sync.config import ConfigWidget
+
+        mock_custom_columns = {
+            "#my_text": {"datatype": "text", "name": "My Text Column"},
+        }
+
+        mock_plugin_action = Mock()
+        mock_plugin_action.gui.library_view.model().custom_columns = mock_custom_columns
+
+        widget = ConfigWidget(plugin_action=mock_plugin_action)
+        result = widget._get_custom_columns([])
+        assert result == {}
