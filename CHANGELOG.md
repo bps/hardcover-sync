@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-05-20
+
+### Bug Fixes
+
+- Current_progress_percent correct import format from hardcover
 ## [0.3.0] - 2026-02-11
 
 ### Bug Fixes
@@ -12,6 +17,10 @@ All notable changes to this project will be documented in this file.
 - Deduplicate user_books and improve sync-from status messages
 - Clean old builds before creating new zip in bundle script
 - Move cancel button before link in link-book dialog
+
+### Documentation
+
+- Update changelog for v0.3.0
 
 ### Features
 
