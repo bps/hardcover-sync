@@ -1,8 +1,5 @@
 # Calibre development environment setup
 
-calibre_version := `calibre --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "7.0.0"`
-calibre_source_url := "https://download.calibre-ebook.com/" + calibre_version + "/calibre-" + calibre_version + ".tar.xz"
-
 # Download and extract Calibre source for IDE support
 source:
     #!/usr/bin/env bash
@@ -13,9 +10,23 @@ source:
         exit 0
     fi
 
-    echo "Downloading Calibre {{calibre_version}} source..."
+    calibre_output=""
+    if command -v calibre-debug >/dev/null 2>&1; then
+        calibre_output="$(calibre-debug --version 2>/dev/null || true)"
+    elif command -v calibre >/dev/null 2>&1; then
+        calibre_output="$(calibre --version 2>/dev/null || true)"
+    fi
+
+    if [[ "$calibre_output" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+        calibre_version="${BASH_REMATCH[1]}"
+    else
+        calibre_version="7.0.0"
+    fi
+    calibre_source_url="https://download.calibre-ebook.com/${calibre_version}/calibre-${calibre_version}.tar.xz"
+
+    echo "Downloading Calibre ${calibre_version} source..."
     mkdir -p source
-    curl -L "{{calibre_source_url}}" | tar -xJ -C source --strip-components=1
+    curl -L "$calibre_source_url" | tar -xJ -C source --strip-components=1
     echo "Calibre source extracted to .calibre/source"
 
 # Clean up downloaded source
@@ -46,4 +57,4 @@ run *ARGS:
     export CALIBRE_CONFIG_DIRECTORY="${CALIBRE_CONFIG_DIRECTORY:-$(pwd)/config}"
     mkdir -p "$CALIBRE_CONFIG_DIRECTORY"
 
-    calibre-debug {{ARGS}}
+    calibre-debug {{ ARGS }}
