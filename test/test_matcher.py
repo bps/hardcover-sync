@@ -209,6 +209,26 @@ class TestMatchByISBN:
         mock_cache.set_isbn.assert_called_once()
 
     @patch("hardcover_sync.matcher.get_cache")
+    def test_api_match_does_not_cache_non_positive_edition_id(self, mock_get_cache):
+        """Test ISBN match does not cache placeholder edition IDs."""
+        mock_cache = MagicMock()
+        mock_cache.get_by_isbn.return_value = None
+        mock_get_cache.return_value = mock_cache
+
+        mock_api = MagicMock()
+        mock_api.find_book_by_isbn.return_value = Book(
+            id=789,
+            title="Found Book",
+            slug="found",
+            editions=[Edition(id=-1, isbn_13="9780123456789")],
+        )
+
+        result = match_by_isbn(mock_api, "9780123456789")
+
+        assert result.book is not None
+        mock_cache.set_isbn.assert_called_once_with("9780123456789", 789, None, "Found Book")
+
+    @patch("hardcover_sync.matcher.get_cache")
     def test_no_match(self, mock_get_cache):
         """Test ISBN with no match."""
         mock_cache = MagicMock()
@@ -375,6 +395,16 @@ class TestCalibreIdentifiers:
 
         assert result is None
 
+    def test_get_hardcover_edition_id_non_positive(self):
+        """Test non-positive Hardcover edition IDs are ignored."""
+        for value in ("-1", "0"):
+            mock_db = MagicMock()
+            mock_db.field_for.return_value = {"hardcover-edition": value}
+
+            result = get_hardcover_edition_id(mock_db, 1)
+
+            assert result is None
+
     def test_set_hardcover_slug(self):
         """Test setting Hardcover slug."""
         mock_db = MagicMock()
@@ -397,6 +427,18 @@ class TestCalibreIdentifiers:
             "identifiers", {1: {"hardcover": "the-hobbit", "hardcover-edition": "456"}}
         )
 
+    def test_set_hardcover_slug_ignores_non_positive_edition(self):
+        """Test non-positive edition IDs are not written."""
+        for edition_id in (-1, 0):
+            mock_db = MagicMock()
+            mock_db.field_for.return_value = {}
+
+            set_hardcover_slug(mock_db, 1, "the-hobbit", edition_id=edition_id)
+
+            mock_db.set_field.assert_called_once_with(
+                "identifiers", {1: {"hardcover": "the-hobbit"}}
+            )
+
     def test_set_hardcover_slug_removes_old_edition(self):
         """Test setting Hardcover slug without edition removes old edition."""
         mock_db = MagicMock()
@@ -405,6 +447,21 @@ class TestCalibreIdentifiers:
         set_hardcover_slug(mock_db, 1, "the-hobbit")
 
         mock_db.set_field.assert_called_once_with("identifiers", {1: {"hardcover": "the-hobbit"}})
+
+    def test_set_hardcover_slug_removes_old_edition_for_non_positive_id(self):
+        """Test relinking with a non-positive edition ID removes any old edition ID."""
+        for edition_id in (-1, 0):
+            mock_db = MagicMock()
+            mock_db.field_for.return_value = {
+                "hardcover": "old-book",
+                "hardcover-edition": "200",
+            }
+
+            set_hardcover_slug(mock_db, 1, "the-hobbit", edition_id=edition_id)
+
+            mock_db.set_field.assert_called_once_with(
+                "identifiers", {1: {"hardcover": "the-hobbit"}}
+            )
 
     def test_remove_hardcover_link(self):
         """Test removing Hardcover link."""

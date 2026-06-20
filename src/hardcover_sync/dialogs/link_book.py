@@ -28,7 +28,12 @@ from qt.core import (
 
 from ..api import HardcoverAPI
 from ..config import get_plugin_prefs
-from ..matcher import MatchResult, search_for_calibre_book, set_hardcover_slug
+from ..matcher import (
+    MatchResult,
+    normalize_edition_id,
+    search_for_calibre_book,
+    set_hardcover_slug,
+)
 from ..models import Book
 
 
@@ -41,6 +46,13 @@ class PendingLink:
     hardcover_slug: str
     edition_id: int | None
     auto: bool
+
+
+def _real_edition_id(book: Book) -> int | None:
+    """Return the first real Hardcover edition ID for a book, excluding search placeholders."""
+    if book.editions:
+        return normalize_edition_id(book.editions[0].id)
+    return None
 
 
 class LinkBookDialog(QDialog):
@@ -264,7 +276,7 @@ class LinkBookDialog(QDialog):
         if not book:
             return
 
-        edition_id = book.editions[0].id if book.editions else None
+        edition_id = _real_edition_id(book)
         self.pending_links.append(
             PendingLink(
                 calibre_book_id=book_id,
@@ -380,7 +392,7 @@ class LinkBookDialog(QDialog):
             return
 
         book_id = self._current_book[0]
-        edition_id = self.selected_book.editions[0].id if self.selected_book.editions else None
+        edition_id = _real_edition_id(self.selected_book)
         self.pending_links.append(
             PendingLink(
                 calibre_book_id=book_id,
@@ -431,6 +443,6 @@ class LinkBookDialog(QDialog):
 
     def get_selected_edition_id(self) -> int | None:
         """Get the edition ID for the selected book."""
-        if self.selected_book and self.selected_book.editions:
-            return self.selected_book.editions[0].id
+        if self.selected_book:
+            return _real_edition_id(self.selected_book)
         return None

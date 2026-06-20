@@ -92,11 +92,18 @@ def get_hardcover_edition_id(db: Any, book_id: int) -> int | None:
     """
     identifiers = get_calibre_book_identifiers(db, book_id)
     ed_id = identifiers.get("hardcover-edition")
-    if ed_id:
-        try:
-            return int(ed_id)
-        except ValueError:
-            pass
+    return normalize_edition_id(ed_id)
+
+
+def normalize_edition_id(value: object) -> int | None:
+    """Return a positive Hardcover edition ID, or None for placeholders/invalid values."""
+    try:
+        edition_id = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    if edition_id > 0:
+        return edition_id
     return None
 
 
@@ -148,6 +155,7 @@ def set_hardcover_slug(
     identifiers = get_calibre_book_identifiers(db, book_id)
     identifiers["hardcover"] = slug
 
+    edition_id = normalize_edition_id(edition_id)
     if edition_id is not None:
         identifiers["hardcover-edition"] = str(edition_id)
     elif "hardcover-edition" in identifiers:
@@ -207,7 +215,7 @@ def match_by_isbn(api: HardcoverAPI, isbn: str) -> MatchResult:
     book = api.find_book_by_isbn(isbn)
     if book:
         # Cache the result
-        edition_id = book.editions[0].id if book.editions else None
+        edition_id = normalize_edition_id(book.editions[0].id) if book.editions else None
         cache.set_isbn(isbn, book.id, edition_id, book.title)
 
         return MatchResult(

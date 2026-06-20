@@ -72,6 +72,34 @@ class TestDialogHelpers:
         assert SyncToHardcoverDialog is not None
         assert UpdateProgressDialog is not None
 
+    def test_link_book_real_edition_id_returns_positive_id(self):
+        """Test link dialog helper returns positive edition IDs."""
+        from hardcover_sync.dialogs.link_book import _real_edition_id
+        from hardcover_sync.models import Book, Edition
+
+        book = Book(id=1, title="Test", editions=[Edition(id=123)])
+
+        assert _real_edition_id(book) == 123
+
+    def test_link_book_real_edition_id_ignores_search_placeholders(self):
+        """Test link dialog helper ignores non-positive search placeholder edition IDs."""
+        from hardcover_sync.dialogs.link_book import _real_edition_id
+        from hardcover_sync.models import Book, Edition
+
+        for edition_id in (-1, 0):
+            book = Book(id=1, title="Test", editions=[Edition(id=edition_id)])
+
+            assert _real_edition_id(book) is None
+
+    def test_link_book_real_edition_id_handles_missing_editions(self):
+        """Test link dialog helper handles books without editions."""
+        from hardcover_sync.dialogs.link_book import _real_edition_id
+        from hardcover_sync.models import Book
+
+        book = Book(id=1, title="Test", editions=None)
+
+        assert _real_edition_id(book) is None
+
 
 # =============================================================================
 # Test API list methods that dialogs use
