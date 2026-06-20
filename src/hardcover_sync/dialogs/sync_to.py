@@ -26,6 +26,7 @@ from qt.core import (
 
 from ..api import HardcoverAPI
 from ..config import (
+    SYNCABLE_COLUMNS,
     STATUS_IDS,
     get_unmapped_columns,
 )
@@ -213,7 +214,7 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
             )
         elif not self.changes:
             unmapped = get_unmapped_columns(self.prefs)
-            if len(unmapped) == 6:  # All unmapped
+            if len(unmapped) == len(SYNCABLE_COLUMNS):  # All unmapped
                 self.status_label.setText(
                     f"Analyzed {result.linked_count} linked book(s). "
                     "<b>No columns are mapped!</b> "
@@ -412,24 +413,32 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
 
         for change in changes:
             if change.field == "status" and change.new_value:
-                status_id = calibre_to_hc_status.get(change.new_value)
+                status_id = int(change.api_value) if change.api_value is not None else None
+                if status_id is None:
+                    status_id = calibre_to_hc_status.get(change.new_value)
                 if status_id is None:
                     status_id = STATUS_IDS.get(change.new_value)
                 if status_id:
                     user_book_data["status_id"] = status_id
             elif change.field == "rating":
-                user_book_data["rating"] = float(change.api_value) if change.api_value else None
+                user_book_data["rating"] = (
+                    float(change.api_value) if change.api_value is not None else None
+                )
             elif change.field == "progress":
-                read_data["progress_pages"] = int(change.api_value) if change.api_value else None
+                read_data["progress_pages"] = (
+                    int(change.api_value) if change.api_value is not None else None
+                )
             elif change.field == "progress_percent":
                 # api_value is already 0.0-1.0 decimal
-                read_data["progress"] = float(change.api_value) if change.api_value else None
+                read_data["progress"] = (
+                    float(change.api_value) if change.api_value is not None else None
+                )
             elif change.field == "date_started":
-                read_data["started_at"] = change.api_value
+                read_data["started_at"] = change.api_value or change.new_value
             elif change.field == "date_read":
-                read_data["finished_at"] = change.api_value
+                read_data["finished_at"] = change.api_value or change.new_value
             elif change.field == "review":
-                user_book_data["review"] = change.api_value
+                user_book_data["review"] = change.api_value or change.new_value
 
         if not user_book_data and not read_data:
             return False, "No valid update data"

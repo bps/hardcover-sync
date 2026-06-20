@@ -52,6 +52,8 @@ class HardcoverCache:
         self._isbn_cache: dict[str, CachedBook] = {}
         self._library_cache: dict[int, dict] = {}  # hardcover_id -> user_book data
         self._library_cached_at: datetime | None = None
+        if self._db:
+            self._load_cache()
 
     def set_database(self, db: Any) -> None:
         """Set the database instance and load cached data."""
@@ -60,6 +62,10 @@ class HardcoverCache:
 
     def _load_cache(self) -> None:
         """Load cache from database storage."""
+        self._isbn_cache = {}
+        self._library_cache = {}
+        self._library_cached_at = None
+
         if not self._db:
             return
 

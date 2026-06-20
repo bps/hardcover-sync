@@ -459,7 +459,7 @@ class HardcoverSyncAction(InterfaceAction):
         # Get the Hardcover slug from the first selected book
         db = self.gui.current_db.new_api
         book_id = book_ids[0]
-        identifiers = db.field_for("identifiers", book_id)
+        identifiers = db.field_for("identifiers", book_id) or {}
         hardcover_slug = identifiers.get("hardcover")
 
         if not hardcover_slug:

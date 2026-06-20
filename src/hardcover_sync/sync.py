@@ -372,8 +372,13 @@ def find_sync_from_changes(
         current_progress_pct = hc_book.current_progress_percent
         if sync_progress and progress_percent_col and current_progress_pct is not None:
             current = get_calibre_value(calibre_id, progress_percent_col)
-            new_progress_pct = round(current_progress_pct / 100, 3)
-            current_rounded = round(float(current), 1) if current else None
+            new_progress_pct = round(current_progress_pct, 1)
+            try:
+                current_rounded = (
+                    round(float(current), 1) if current is not None and current != "" else None
+                )
+            except (TypeError, ValueError):
+                current_rounded = None
             if current_rounded != new_progress_pct:
                 changes.append(
                     SyncChange(
@@ -578,12 +583,13 @@ def find_sync_to_changes(
                     hc_status_id = STATUS_IDS.get(calibre_status)
 
                 if hc_status_id:
-                    hc_current_status = (
-                        READING_STATUSES.get(hc_user_book.status_id)
-                        if hc_user_book and hc_user_book.status_id
-                        else None
-                    )
-                    if hc_current_status != calibre_status:
+                    hc_current_status_id = hc_user_book.status_id if hc_user_book else None
+                    if hc_current_status_id != hc_status_id:
+                        hc_current_status = (
+                            get_status_from_hardcover(hc_current_status_id, status_mappings)
+                            if hc_current_status_id
+                            else None
+                        )
                         result.changes.append(
                             SyncToChange(
                                 calibre_id=book_id,
@@ -593,6 +599,7 @@ def find_sync_to_changes(
                                 field="status",
                                 old_value=hc_current_status or "(not in library)",
                                 new_value=calibre_status,
+                                api_value=hc_status_id,
                             )
                         )
                         book_has_changes = True
@@ -638,6 +645,7 @@ def find_sync_to_changes(
                             if hc_current_progress is not None
                             else "(empty)",
                             new_value=str(calibre_progress),
+                            api_value=calibre_progress,
                         )
                     )
                     book_has_changes = True
@@ -685,6 +693,7 @@ def find_sync_to_changes(
                             field="date_started",
                             old_value=hc_current_date or "(empty)",
                             new_value=calibre_date_str,
+                            api_value=calibre_date_str,
                         )
                     )
                     book_has_changes = True
@@ -709,6 +718,7 @@ def find_sync_to_changes(
                             field="date_read",
                             old_value=hc_current_date or "(empty)",
                             new_value=calibre_date_str,
+                            api_value=calibre_date_str,
                         )
                     )
                     book_has_changes = True
@@ -728,6 +738,7 @@ def find_sync_to_changes(
                             field="review",
                             old_value=truncate_for_display(hc_current_review),
                             new_value=truncate_for_display(calibre_review),
+                            api_value=calibre_review,
                         )
                     )
                     book_has_changes = True

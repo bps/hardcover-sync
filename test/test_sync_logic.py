@@ -743,7 +743,7 @@ class TestFindSyncFromChangesProgress:
 
         def get_value(calibre_id, col):
             if col == "progress_pct_col":
-                return 0.50  # Current is 50%, should change to 75%
+                return 50.0  # Current is 50%, should change to 75%
             return None
 
         def get_title(calibre_id):
@@ -759,8 +759,9 @@ class TestFindSyncFromChangesProgress:
 
         assert len(changes) == 1
         assert changes[0].field == "progress_percent"
-        assert "0.5%" in changes[0].old_value
-        assert "0.75%" in changes[0].new_value
+        assert changes[0].old_value == "50.0%"
+        assert changes[0].new_value == "75.0%"
+        assert changes[0].raw_value == "75.0"
 
     def test_progress_percent_empty_to_value(self):
         """Test progress percent change from empty to value."""
@@ -784,7 +785,8 @@ class TestFindSyncFromChangesProgress:
         assert len(changes) == 1
         assert changes[0].field == "progress_percent"
         assert changes[0].old_value == "(empty)"
-        assert "0.25" in changes[0].new_value
+        assert changes[0].new_value == "25.0%"
+        assert changes[0].raw_value == "25.0"
 
     def test_progress_percent_valid(self):
         """Test detecting progress percent changes and is a valid percentage."""
@@ -809,7 +811,30 @@ class TestFindSyncFromChangesProgress:
 
         assert len(changes) == 1
         assert changes[0].field == "progress_percent"
-        assert changes[0].raw_value == str(0.75)
+        assert changes[0].raw_value == "75.0"
+
+    def test_progress_percent_no_change_at_zero(self):
+        """Test 0% progress does not look empty when Calibre also stores 0%."""
+        hc_books = [self.create_user_book_with_reads(100, progress=0.0)]
+        hc_to_calibre = {"test-book": 1}
+
+        def get_value(calibre_id, col):
+            if col == "progress_pct_col":
+                return 0.0
+            return None
+
+        def get_title(calibre_id):
+            return "Test Book"
+
+        prefs = {
+            "status_column": "",
+            "progress_percent_column": "progress_pct_col",
+            "sync_progress": True,
+        }
+
+        changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
+
+        assert changes == []
 
 
 class TestFindSyncFromChangesDates:
@@ -1537,6 +1562,21 @@ class TestFindSyncToChanges:
         assert len(status_changes) == 1
         assert status_changes[0].new_value == "Finished"
 
+    def test_status_custom_mapping_no_change_when_ids_match(self):
+        """No status change when a custom Calibre value maps to the current HC status ID."""
+        hc_user_book = self._make_user_book(status_id=1)  # Want to Read on HC
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {"1": "Wishlist"},
+            },
+            calibre_values={(1, "#status"): "Wishlist"},
+            user_books={100: hc_user_book},
+        )
+
+        status_changes = [c for c in result.changes if c.field == "status"]
+        assert len(status_changes) == 0
+
     def test_status_not_in_library_old_value(self):
         """When no user_book on HC, old_value shows '(not in library)'."""
         result = self._call(
@@ -1632,6 +1672,7 @@ class TestFindSyncToChanges:
         assert len(progress_changes) == 1
         assert progress_changes[0].new_value == "200"
         assert progress_changes[0].old_value == "100"
+        assert progress_changes[0].api_value == 200
 
     def test_progress_pages_no_change(self):
         """No change when progress pages match."""
@@ -1730,6 +1771,7 @@ class TestFindSyncToChanges:
         assert len(date_changes) == 1
         assert date_changes[0].new_value == "2024-06-01"
         assert date_changes[0].old_value == "2024-01-15"
+        assert date_changes[0].api_value == "2024-06-01"
 
     def test_date_started_empty_old_value(self):
         """Old value shows '(empty)' when no HC start date."""
@@ -1779,6 +1821,7 @@ class TestFindSyncToChanges:
         assert len(date_changes) == 1
         assert date_changes[0].new_value == "2024-05-01"
         assert date_changes[0].old_value == "2024-06-20"
+        assert date_changes[0].api_value == "2024-05-01"
 
     def test_date_read_empty_old_value(self):
         """Old value shows '(empty)' when no HC finish date."""
@@ -1811,6 +1854,7 @@ class TestFindSyncToChanges:
         )
         review_changes = [c for c in result.changes if c.field == "review"]
         assert len(review_changes) == 1
+        assert review_changes[0].api_value == "New review"
 
     def test_review_no_change_when_equal(self):
         """No change when reviews match."""

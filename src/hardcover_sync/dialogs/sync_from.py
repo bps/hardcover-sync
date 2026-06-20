@@ -26,7 +26,7 @@ from qt.core import (
 )
 
 from ..api import HardcoverAPI
-from ..config import READING_STATUSES, get_column_mappings, get_unmapped_columns
+from ..config import READING_STATUSES, SYNCABLE_COLUMNS, get_column_mappings, get_unmapped_columns
 from ..models import UserBook
 from ..sync import (
     NewBookAction,
@@ -317,7 +317,7 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
                 else:
                     # Check if columns are mapped
                     unmapped = get_unmapped_columns(self.prefs)
-                    if len(unmapped) == 6:  # All unmapped
+                    if len(unmapped) == len(SYNCABLE_COLUMNS):  # All unmapped
                         self.status_label.setText(
                             f"Found {total} Hardcover books, "
                             f"{linked_count} linked. <b>No columns are mapped!</b> "
@@ -899,8 +899,10 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
         status_col = col.get("status", "")
         rating_col = col.get("rating", "")
         progress_col = col.get("progress", "")
+        progress_percent_col = col.get("progress_percent", "")
         date_started_col = col.get("date_started", "")
         date_read_col = col.get("date_read", "")
+        is_read_col = col.get("is_read", "")
         review_col = col.get("review", "")
 
         # Get status mappings
@@ -930,6 +932,10 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
         if progress_col and current_progress is not None:
             self._set_column_value(book_id, progress_col, current_progress)
 
+        current_progress_pct = user_book.current_progress_percent
+        if progress_percent_col and current_progress_pct is not None:
+            self._set_column_value(book_id, progress_percent_col, round(current_progress_pct, 1))
+
         # Apply date started (from latest read)
         latest_started = user_book.latest_started_at
         if date_started_col and latest_started:
@@ -947,6 +953,10 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
                 self._set_column_value(book_id, date_read_col, date_value)
             except (ValueError, TypeError):
                 pass
+
+        # Apply is_read boolean from Hardcover status
+        if is_read_col:
+            self._set_column_value(book_id, is_read_col, user_book.status_id == 3)
 
         # Apply review
         if review_col and user_book.review:

@@ -412,6 +412,43 @@ class TestLoadCacheNullDb:
 class TestLoadCacheFromDatabase:
     """Test _load_cache loading from database prefs."""
 
+    def test_init_with_db_loads_cache_from_db_prefs(self):
+        """Constructing a cache with a DB loads that library's persisted cache."""
+        import sys
+        from types import ModuleType
+        from unittest.mock import patch
+
+        cache_data = {
+            "isbn_cache": {
+                "9780123456789": {
+                    "hardcover_id": 100,
+                    "edition_id": 200,
+                    "title": "Test Book",
+                    "cached_at": datetime.now().isoformat(),
+                },
+            },
+            "library_cache": {},
+        }
+
+        fake_serialize = ModuleType("calibre.utils.serialize")
+        fake_serialize.json_loads = lambda data: cache_data  # type: ignore[attr-defined]
+
+        mock_db = MagicMock()
+        mock_db.new_api.pref.return_value = b"serialized"
+
+        with patch.dict(
+            sys.modules,
+            {
+                "calibre": ModuleType("calibre"),
+                "calibre.utils": ModuleType("calibre.utils"),
+                "calibre.utils.serialize": fake_serialize,
+            },
+        ):
+            cache = HardcoverCache(db=mock_db)
+
+        assert cache.get_by_isbn("9780123456789") is not None
+        assert cache.get_by_isbn("9780123456789").hardcover_id == 100
+
     def test_load_cache_from_db_prefs(self):
         """Cache loads ISBN and library data from database prefs."""
         import sys
@@ -464,6 +501,20 @@ class TestLoadCacheFromDatabase:
         mock_db.new_api.pref.return_value = None
 
         cache = HardcoverCache(db=mock_db)
+
+        assert cache.get_by_isbn("9780123456789") is None
+        assert not cache.is_library_cached()
+
+    def test_set_database_clears_cache_when_new_db_has_no_data(self):
+        """Switching libraries cannot leave the previous library's cache in memory."""
+        cache = HardcoverCache()
+        cache.set_isbn("9780123456789", 100, 200, "Old Library Book")
+        cache.set_library([{"book_id": 1, "status_id": 3}])
+
+        mock_db = MagicMock()
+        mock_db.new_api.pref.return_value = None
+
+        cache.set_database(mock_db)
 
         assert cache.get_by_isbn("9780123456789") is None
         assert not cache.is_library_cached()
