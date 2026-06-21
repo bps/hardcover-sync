@@ -422,7 +422,13 @@ class LinkBookDialog(QDialog):
     def _finish(self) -> None:
         """Commit all pending links and accept the dialog."""
         for link in self.pending_links:
-            set_hardcover_slug(self.db, link.calibre_book_id, link.hardcover_slug, link.edition_id)
+            set_hardcover_slug(
+                self.db,
+                link.calibre_book_id,
+                link.hardcover_slug,
+                link.edition_id,
+                hardcover_book_id=link.hardcover_book_id,
+            )
         self.accept()
 
     def _advance(self) -> bool:

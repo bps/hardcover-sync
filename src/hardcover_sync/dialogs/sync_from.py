@@ -877,7 +877,10 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
             from ..matcher import set_hardcover_slug
 
             set_hardcover_slug(
-                self.db, book_id, new_book.hardcover_slug or str(new_book.hardcover_book_id)
+                self.db,
+                book_id,
+                new_book.hardcover_slug or str(new_book.hardcover_book_id),
+                hardcover_book_id=new_book.hardcover_book_id,
             )
 
             # Apply all Hardcover user data to the new book

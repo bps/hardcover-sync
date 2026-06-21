@@ -14,6 +14,8 @@ from .api import HardcoverAPI
 from .cache import get_cache
 from .models import Book
 
+_UNSET = object()
+
 
 @dataclass
 class MatchResult:
@@ -95,16 +97,42 @@ def get_hardcover_edition_id(db: Any, book_id: int) -> int | None:
     return normalize_edition_id(ed_id)
 
 
-def normalize_edition_id(value: object) -> int | None:
-    """Return a positive Hardcover edition ID, or None for placeholders/invalid values."""
+def get_hardcover_book_id(db: Any, book_id: int) -> int | None:
+    """
+    Get the Hardcover book ID for a Calibre book.
+
+    Args:
+        db: Calibre database API.
+        book_id: The Calibre book ID.
+
+    Returns:
+        Hardcover book ID if linked, None otherwise.
+    """
+    identifiers = get_calibre_book_identifiers(db, book_id)
+    hc_book_id = normalize_hardcover_id(identifiers.get("hardcover-book"))
+    if hc_book_id is not None:
+        return hc_book_id
+
+    # Backward compatibility: older links may store a numeric book ID in
+    # the primary hardcover identifier instead of a slug.
+    return normalize_hardcover_id(identifiers.get("hardcover"))
+
+
+def normalize_hardcover_id(value: object) -> int | None:
+    """Return a positive Hardcover ID, or None for placeholders/invalid values."""
     try:
-        edition_id = int(value)
+        hardcover_id = int(value)
     except (TypeError, ValueError):
         return None
 
-    if edition_id > 0:
-        return edition_id
+    if hardcover_id > 0:
+        return hardcover_id
     return None
+
+
+def normalize_edition_id(value: object) -> int | None:
+    """Return a positive Hardcover edition ID, or None for placeholders/invalid values."""
+    return normalize_hardcover_id(value)
 
 
 def resolve_hardcover_book(api: HardcoverAPI, slug_or_id: str) -> Book | None:
@@ -142,18 +170,29 @@ def set_hardcover_slug(
     book_id: int,
     slug: str,
     edition_id: int | None = None,
+    *,
+    hardcover_book_id: object = _UNSET,
 ) -> None:
     """
-    Set the Hardcover slug for a Calibre book.
+    Set the Hardcover slug and optional numeric IDs for a Calibre book.
 
     Args:
         db: Calibre database API.
         book_id: The Calibre book ID.
         slug: The Hardcover book slug (e.g. "the-hobbit").
         edition_id: Optional Hardcover edition ID.
+        hardcover_book_id: Optional Hardcover book ID. Omitted preserves any
+            existing value; pass None to remove it.
     """
     identifiers = get_calibre_book_identifiers(db, book_id)
     identifiers["hardcover"] = slug
+
+    if hardcover_book_id is not _UNSET:
+        normalized_book_id = normalize_hardcover_id(hardcover_book_id)
+        if normalized_book_id is not None:
+            identifiers["hardcover-book"] = str(normalized_book_id)
+        elif "hardcover-book" in identifiers:
+            del identifiers["hardcover-book"]
 
     edition_id = normalize_edition_id(edition_id)
     if edition_id is not None:
@@ -177,6 +216,9 @@ def remove_hardcover_link(db: Any, book_id: int) -> None:
     changed = False
     if "hardcover" in identifiers:
         del identifiers["hardcover"]
+        changed = True
+    if "hardcover-book" in identifiers:
+        del identifiers["hardcover-book"]
         changed = True
     if "hardcover-edition" in identifiers:
         del identifiers["hardcover-edition"]
