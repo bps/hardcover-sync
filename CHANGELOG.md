@@ -2,11 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.2] - 2026-06-21
+
+### Bug Fixes
+
+- Prevent justfile from launching calibre
+- Reject non-positive Hardcover edition IDs
+- Repair sync edge cases
+- Store Hardcover book IDs when linking
 ## [0.3.1] - 2026-05-20
 
 ### Bug Fixes
 
 - Current_progress_percent correct import format from hardcover
+
+### Documentation
+
+- Update changelog for v0.3.1
 ## [0.3.0] - 2026-02-11
 
 ### Bug Fixes
