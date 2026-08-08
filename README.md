@@ -56,6 +56,8 @@ You can use either or both progress columns:
 
 Hardcover stores both values and converts between them based on the book's page count.
 
+For a read-only column showing whether each book has a Hardcover identifier, see [Tips & tricks](#tips--tricks).
+
 #### Date column format
 
 I use `yyyy-MM-dd`. Check the [docs for the format string](https://manual.calibre-ebook.com/generated/en/template_ref.html#id45).
@@ -102,6 +104,26 @@ Before syncing, books must be linked between Calibre and Hardcover:
 - Select books to sync
 - Preview changes before applying
 - Can add books to your Hardcover library or update existing books
+
+## Tips & tricks
+
+### Show Hardcover link status in the book list
+
+You can add a read-only custom column that shows a green check when a book has a `hardcover` identifier and a red X when it does not:
+
+1. In Calibre, go to **Preferences → Add your own columns** and add a custom column.
+2. Configure these fields:
+   - **Lookup name:** `hardcover` (Calibre will refer to the created column as `#hardcover`)
+   - **Column heading:** `Linked to Hardcover?`
+   - **Column type:** `Column built from other columns`
+   - **Show checkmarks:** enabled
+   - **Template:** `{identifiers:identifier_in_list(hardcover,yes,no)}`
+   - **Sort/search column by:** `Yes/No`
+3. Click **OK**. Calibre will prompt you to restart.
+
+![Calibre custom column configured to show a check or X based on the Hardcover identifier](docs/images/hardcover-link-status-column.png)
+
+This column is computed from the identifier stored in Calibre; it does not verify that the identifier still resolves on Hardcover.
 
 ## Development
 

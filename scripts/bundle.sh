@@ -52,6 +52,7 @@ echo "Cleaning up..."
 find "$BUILD_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find "$BUILD_DIR" -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
 find "$BUILD_DIR" -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
+find "$BUILD_DIR" -type d \( -name "test" -o -name "tests" \) -prune -exec rm -rf {} + 2>/dev/null || true
 find "$BUILD_DIR" -type f -name "*.pyc" -delete 2>/dev/null || true
 find "$BUILD_DIR" -type f -name "*.pyo" -delete 2>/dev/null || true
 rm -rf "$BUILD_DIR/bin" 2>/dev/null || true
