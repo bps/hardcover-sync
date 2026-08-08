@@ -161,11 +161,12 @@ class TestSyncableColumns:
         """Test that SYNCABLE_COLUMNS is defined with expected entries."""
         from hardcover_sync.config import SYNCABLE_COLUMNS
 
-        assert len(SYNCABLE_COLUMNS) == 7
+        assert len(SYNCABLE_COLUMNS) == 8
         pref_keys = [col[0] for col in SYNCABLE_COLUMNS]
         assert "status_column" in pref_keys
         assert "rating_column" in pref_keys
         assert "progress_column" in pref_keys
+        assert "progress_percent_column" in pref_keys
         assert "date_started_column" in pref_keys
         assert "date_read_column" in pref_keys
         assert "is_read_column" in pref_keys
@@ -178,7 +179,7 @@ class TestSyncableColumns:
         # Empty prefs means all unmapped
         prefs = {}
         unmapped = get_unmapped_columns(prefs)
-        assert len(unmapped) == 7
+        assert len(unmapped) == 8
         assert "Status" in unmapped
         assert "Rating" in unmapped
 
@@ -188,10 +189,11 @@ class TestSyncableColumns:
 
         prefs = {"status_column": "#hc_status", "rating_column": "rating"}
         unmapped = get_unmapped_columns(prefs)
-        assert len(unmapped) == 5
+        assert len(unmapped) == 6
         assert "Status" not in unmapped
         assert "Rating" not in unmapped
-        assert "Progress" in unmapped
+        assert "Progress (pages)" in unmapped
+        assert "Progress (%)" in unmapped
 
     def test_get_unmapped_columns_all_mapped(self):
         """Test get_unmapped_columns when all columns are mapped."""
@@ -201,6 +203,7 @@ class TestSyncableColumns:
             "status_column": "#hc_status",
             "rating_column": "rating",
             "progress_column": "#progress",
+            "progress_percent_column": "#progress_percent",
             "date_started_column": "#started",
             "date_read_column": "#read",
             "is_read_column": "#is_read",
@@ -208,3 +211,33 @@ class TestSyncableColumns:
         }
         unmapped = get_unmapped_columns(prefs)
         assert len(unmapped) == 0
+
+    def test_progress_percent_only_counts_as_mapped(self):
+        """A percentage-only configuration is recognized as a column mapping."""
+        from hardcover_sync.config import get_column_mappings, get_unmapped_columns
+
+        prefs = {"progress_percent_column": "#progress_percent"}
+
+        assert get_column_mappings(prefs) == {"progress_percent": "#progress_percent"}
+        assert "Progress (%)" not in get_unmapped_columns(prefs)
+
+
+class TestProgressColumnOptions:
+    """Tests for page and percentage column compatibility."""
+
+    def test_integer_columns_are_available_for_percentage_progress(self):
+        """Integer percentages are offered without changing page column options."""
+        from unittest.mock import Mock
+
+        from hardcover_sync.config import ConfigWidget
+
+        plugin_action = Mock()
+        plugin_action.gui.library_view.model().custom_columns = {
+            "#integer": {"datatype": "int", "name": "Integer"},
+            "#float": {"datatype": "float", "name": "Float"},
+        }
+
+        widget = ConfigWidget(plugin_action=plugin_action)
+
+        assert widget.progress_combo.column_names == ["", "#integer"]
+        assert widget.progress_percent_combo.column_names == ["", "#float", "#integer"]

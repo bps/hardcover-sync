@@ -41,7 +41,8 @@ STATUS_IDS = {v: k for k, v in READING_STATUSES.items()}
 SYNCABLE_COLUMNS = [
     ("status_column", "Status"),
     ("rating_column", "Rating"),
-    ("progress_column", "Progress"),
+    ("progress_column", "Progress (pages)"),
+    ("progress_percent_column", "Progress (%)"),
     ("date_started_column", "Date Started"),
     ("date_read_column", "Date Read"),
     ("is_read_column", "Is Read"),
@@ -58,7 +59,7 @@ DEFAULT_PREFS = {
     "status_column": "",
     "rating_column": "",
     "progress_column": "",  # Integer column for page number
-    "progress_percent_column": "",  # Float column for percentage (0-100)
+    "progress_percent_column": "",  # Integer or float column for percentage (0-100)
     "date_started_column": "",
     "date_read_column": "",
     "is_read_column": "",  # Boolean Yes/No column (True when status is "Read")
@@ -144,10 +145,6 @@ def get_column_mappings(plugin_prefs: Any = None) -> dict[str, str]:
         if col:
             field = pref_key.removesuffix("_column")
             mappings[field] = col
-    # Also include progress_percent which isn't in SYNCABLE_COLUMNS
-    progress_pct = plugin_prefs.get("progress_percent_column", "")
-    if progress_pct:
-        mappings["progress_percent"] = progress_pct
     return mappings
 
 
@@ -376,7 +373,7 @@ class ConfigWidget:
         enum_columns = self._get_custom_columns(["enumeration", "text"])
         rating_columns = self._get_rating_columns()
         int_columns = self._get_custom_columns(["int"])
-        float_columns = self._get_custom_columns(["float"])
+        percent_columns = self._get_custom_columns(["int", "float"])
         date_columns = self._get_custom_columns(["datetime"])
         bool_columns = self._get_custom_columns(["bool"])
         text_columns = self._get_custom_columns(["text", "comments"])
@@ -403,9 +400,9 @@ class ConfigWidget:
         self.columns_layout.addRow("Progress (pages):", self.progress_combo.widget())
         self.progress_row = self.columns_layout.rowCount() - 1
 
-        # Progress percent column (float for percentage) - controlled by sync_progress
+        # Progress percent column (integer or float) - controlled by sync_progress
         self.progress_percent_combo = CustomColumnComboBox(
-            tab, float_columns, prefs.get("progress_percent_column", "")
+            tab, percent_columns, prefs.get("progress_percent_column", "")
         )
         self.progress_percent_combo.setMinimumWidth(200)
         self.columns_layout.addRow("Progress (%):", self.progress_percent_combo.widget())
