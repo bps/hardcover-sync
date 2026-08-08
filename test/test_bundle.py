@@ -7,7 +7,9 @@ These tests check that:
 3. The bundled modules can be imported correctly
 """
 
+import importlib
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -23,6 +25,7 @@ REQUIRED_PACKAGES = [
 # Required files at the plugin root level
 REQUIRED_PLUGIN_FILES = [
     "__init__.py",
+    "_bundled_imports.py",
     "action.py",
     "api.py",
     "config.py",
@@ -98,6 +101,36 @@ class TestBundledDependencies:
                     f"Required package '{package}' not found in plugin zip"
                 )
 
+    def test_dependency_import_manifest_matches_bundle(self, plugin_zip_path):
+        """Verify every bundled Python dependency can be resolved by the import hook."""
+        from hardcover_sync._bundled_imports import _BUNDLED_DEPENDENCIES
+
+        plugin_modules = {
+            "__init__",
+            "_bundled_imports",
+            "_version",
+            "action",
+            "api",
+            "cache",
+            "config",
+            "matcher",
+            "models",
+            "queries",
+            "sync",
+        }
+        plugin_directories = {"dialogs", "images"}
+
+        with zipfile.ZipFile(plugin_zip_path, "r") as zf:
+            roots = {name.split("/", 1)[0] for name in zf.namelist() if "/" in name}
+            roots.update(
+                Path(name).stem
+                for name in zf.namelist()
+                if "/" not in name and name.endswith(".py")
+            )
+
+        dependency_roots = roots - plugin_modules - plugin_directories
+        assert dependency_roots == _BUNDLED_DEPENDENCIES
+
     def test_gql_package_complete(self, plugin_zip_path):
         """Verify the gql package has all required submodules."""
         required_gql_files = [
@@ -172,6 +205,47 @@ class TestBundledDependencies:
 
 class TestBundleImports:
     """Tests that verify imports work correctly from the bundle."""
+
+    def test_plugin_import_does_not_modify_sys_path(self):
+        """Verify plugin initialization leaves the global module search path unchanged."""
+        import hardcover_sync
+
+        original_path = sys.path.copy()
+        importlib.reload(hardcover_sync)
+
+        assert sys.path == original_path
+
+    def test_dependency_finder_ignores_unbundled_modules(self):
+        """Verify the import hook is limited to exact bundled package names."""
+        from hardcover_sync._bundled_imports import BundledDependencyFinder
+
+        finder = BundledDependencyFinder("hardcover_sync")
+
+        assert finder.find_spec("gqlfoo") is None
+        assert finder.find_spec("graphql_ws_next") is None
+        assert finder.find_spec("prefs") is None
+        assert finder.find_spec("config") is None
+        assert finder.find_spec("unrelated") is None
+
+    def test_dependency_finder_installation_is_idempotent(self):
+        """Verify plugin reloads leave only one current dependency finder."""
+        from hardcover_sync._bundled_imports import (
+            _FINDER_MARKER,
+            install_bundled_dependency_finder,
+        )
+
+        original_meta_path = sys.meta_path.copy()
+        try:
+            install_bundled_dependency_finder("hardcover_sync")
+            install_bundled_dependency_finder("hardcover_sync")
+            matching_finders = [
+                finder
+                for finder in sys.meta_path
+                if getattr(finder, "marker", None) == _FINDER_MARKER
+            ]
+            assert len(matching_finders) == 1
+        finally:
+            sys.meta_path[:] = original_meta_path
 
     def test_api_module_imports(self):
         """Verify the api module can be imported with its dependencies."""
