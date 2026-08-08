@@ -339,6 +339,7 @@ wheels = [
 name = "hardcover-sync"
 source = { editable = "." }
 dependencies = [
+    { name = "exceptiongroup" },
     { name = "gql", extra = ["requests"] },
 ]
 
@@ -353,7 +354,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "gql", extras = ["requests"], specifier = ">=3.5.0" }]
+requires-dist = [
+    { name = "exceptiongroup", specifier = ">=1.2.0" },
+    { name = "gql", extras = ["requests"], specifier = ">=3.5.0" },
+]
 
 [package.metadata.requires-dev]
 dev = [

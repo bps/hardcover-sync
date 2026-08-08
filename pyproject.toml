@@ -22,6 +22,8 @@ classifiers = [
     "Topic :: Other/Nonlisted Topic",
 ]
 dependencies = [
+    # Bundle unconditionally so Python 3.12 release builds also run on Calibre's Python 3.10.
+    "exceptiongroup>=1.2.0",
     "gql[requests]>=3.5.0",
 ]
 
