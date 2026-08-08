@@ -20,8 +20,26 @@ from hardcover_sync.sync import (
     format_rating_as_stars,
     get_status_from_calibre,
     get_status_from_hardcover,
+    normalize_progress_percent,
     truncate_for_display,
 )
+
+
+class TestNormalizeProgressPercent:
+    """Tests for percentage normalization by target column datatype."""
+
+    def test_empty_values(self):
+        """Empty percentages remain unset."""
+        assert normalize_progress_percent(None) is None
+        assert normalize_progress_percent("") is None
+
+    def test_float_precision(self):
+        """Float percentages retain one decimal place."""
+        assert normalize_progress_percent("45.67", "float") == 45.7
+
+    def test_integer_precision_truncates(self):
+        """Integer percentages do not round incomplete progress upward."""
+        assert normalize_progress_percent("99.9", "int") == 99
 
 
 class TestSyncChange:
@@ -813,6 +831,26 @@ class TestFindSyncFromChangesProgress:
         assert changes[0].field == "progress_percent"
         assert changes[0].raw_value == "75.0"
 
+    def test_float_progress_percent_uses_column_precision(self):
+        """Equivalent decimal progress does not produce a float-column change."""
+        hc_books = [self.create_user_book_with_reads(100, progress=0.4567)]
+        prefs = {
+            "status_column": "",
+            "progress_percent_column": "#progress_pct",
+            "sync_progress": True,
+        }
+
+        changes = find_sync_from_changes(
+            hc_books,
+            {"test-book": 1},
+            lambda _book_id, _column: 45.7,
+            lambda _book_id: "Test Book",
+            prefs,
+            get_column_metadata=lambda _column: {"datatype": "float"},
+        )
+
+        assert changes == []
+
     def test_progress_percent_no_change_at_zero(self):
         """Test 0% progress does not look empty when Calibre also stores 0%."""
         hc_books = [self.create_user_book_with_reads(100, progress=0.0)]
@@ -835,6 +873,48 @@ class TestFindSyncFromChangesProgress:
         changes = find_sync_from_changes(hc_books, hc_to_calibre, get_value, get_title, prefs)
 
         assert changes == []
+
+    def test_integer_progress_percent_uses_column_precision(self):
+        """Decimal Hardcover progress equal to an integer column does not resync."""
+        hc_books = [self.create_user_book_with_reads(100, progress=0.437)]
+        prefs = {
+            "status_column": "",
+            "progress_percent_column": "#progress_pct",
+            "sync_progress": True,
+        }
+
+        changes = find_sync_from_changes(
+            hc_books,
+            {"test-book": 1},
+            lambda _book_id, _column: 43,
+            lambda _book_id: "Test Book",
+            prefs,
+            get_column_metadata=lambda _column: {"datatype": "int"},
+        )
+
+        assert changes == []
+
+    def test_integer_progress_percent_change_is_integer(self):
+        """Hardcover progress is converted before writing an integer column."""
+        hc_books = [self.create_user_book_with_reads(100, progress=0.437)]
+        prefs = {
+            "status_column": "",
+            "progress_percent_column": "#progress_pct",
+            "sync_progress": True,
+        }
+
+        changes = find_sync_from_changes(
+            hc_books,
+            {"test-book": 1},
+            lambda _book_id, _column: 40,
+            lambda _book_id: "Test Book",
+            prefs,
+            get_column_metadata=lambda _column: {"datatype": "int"},
+        )
+
+        assert len(changes) == 1
+        assert changes[0].new_value == "43%"
+        assert changes[0].raw_value == "43"
 
 
 class TestFindSyncFromChangesDates:
@@ -1228,6 +1308,10 @@ class TestCoerceValueForColumn:
     def test_int_zero_string(self):
         """String '0' coerces to int 0."""
         assert coerce_value_for_column("0", "int") == 0
+
+    def test_int_decimal_string(self):
+        """Decimal strings can be stored in integer columns."""
+        assert coerce_value_for_column("43.7", "int") == 43
 
     # --- Float coercion ---
 
@@ -1752,6 +1836,71 @@ class TestFindSyncToChanges:
         pct_changes = [c for c in result.changes if c.field == "progress_percent"]
         assert len(pct_changes) == 1
         assert pct_changes[0].old_value == "(empty)"
+
+    def test_integer_progress_percent_no_change_at_column_precision(self):
+        """Integer progress does not overwrite equivalent decimal Hardcover progress."""
+        hc_user_book = self._make_user_book(progress=0.437)
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "progress_percent_column": "#pct",
+            },
+            calibre_values={(1, "#pct"): 43},
+            user_books={100: hc_user_book},
+            column_metadata={"#pct": {"datatype": "int"}},
+        )
+
+        pct_changes = [c for c in result.changes if c.field == "progress_percent"]
+        assert pct_changes == []
+
+    def test_integer_progress_percent_change_uses_integer_value(self):
+        """Integer percentage changes are pushed using the stored precision."""
+        hc_user_book = self._make_user_book(progress=0.437)
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "progress_percent_column": "#pct",
+            },
+            calibre_values={(1, "#pct"): 45},
+            user_books={100: hc_user_book},
+            column_metadata={"#pct": {"datatype": "int"}},
+        )
+
+        pct_changes = [c for c in result.changes if c.field == "progress_percent"]
+        assert len(pct_changes) == 1
+        assert pct_changes[0].api_value == 0.45
+
+    def test_invalid_progress_percent_is_skipped(self):
+        """A non-numeric percentage does not abort sync-to analysis."""
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "progress_percent_column": "#pct",
+            },
+            calibre_values={(1, "#pct"): "not a number"},
+            user_books={100: self._make_user_book(progress=0.5)},
+            column_metadata={"#pct": {"datatype": "float"}},
+        )
+
+        assert [c for c in result.changes if c.field == "progress_percent"] == []
+
+    def test_empty_progress_percent_is_skipped(self):
+        """An empty percentage does not produce a change or division error."""
+        result = self._call(
+            prefs={
+                "status_column": "",
+                "status_mappings": {},
+                "progress_percent_column": "#pct",
+            },
+            calibre_values={(1, "#pct"): ""},
+            user_books={100: self._make_user_book(progress=0.5)},
+            column_metadata={"#pct": {"datatype": "float"}},
+        )
+
+        assert [c for c in result.changes if c.field == "progress_percent"] == []
 
     # --- Date started tests ---
 

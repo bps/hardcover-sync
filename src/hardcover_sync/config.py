@@ -58,7 +58,7 @@ DEFAULT_PREFS = {
     "status_column": "",
     "rating_column": "",
     "progress_column": "",  # Integer column for page number
-    "progress_percent_column": "",  # Float column for percentage (0-100)
+    "progress_percent_column": "",  # Integer or float column for percentage (0-100)
     "date_started_column": "",
     "date_read_column": "",
     "is_read_column": "",  # Boolean Yes/No column (True when status is "Read")
@@ -376,7 +376,7 @@ class ConfigWidget:
         enum_columns = self._get_custom_columns(["enumeration", "text"])
         rating_columns = self._get_rating_columns()
         int_columns = self._get_custom_columns(["int"])
-        float_columns = self._get_custom_columns(["float"])
+        percent_columns = self._get_custom_columns(["int", "float"])
         date_columns = self._get_custom_columns(["datetime"])
         bool_columns = self._get_custom_columns(["bool"])
         text_columns = self._get_custom_columns(["text", "comments"])
@@ -403,9 +403,9 @@ class ConfigWidget:
         self.columns_layout.addRow("Progress (pages):", self.progress_combo.widget())
         self.progress_row = self.columns_layout.rowCount() - 1
 
-        # Progress percent column (float for percentage) - controlled by sync_progress
+        # Progress percent column (integer or float) - controlled by sync_progress
         self.progress_percent_combo = CustomColumnComboBox(
-            tab, float_columns, prefs.get("progress_percent_column", "")
+            tab, percent_columns, prefs.get("progress_percent_column", "")
         )
         self.progress_percent_combo.setMinimumWidth(200)
         self.columns_layout.addRow("Progress (%):", self.progress_percent_combo.widget())

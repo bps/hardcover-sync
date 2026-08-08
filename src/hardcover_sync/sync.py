@@ -216,6 +216,18 @@ def get_status_from_hardcover(status_id: int, status_mappings: dict) -> str | No
     return READING_STATUSES.get(status_id)
 
 
+def normalize_progress_percent(value: Any, datatype: str | None = None) -> int | float | None:
+    """Normalize a percentage for comparison and storage in a Calibre column."""
+    if value is None or value == "":
+        return None
+
+    numeric_value = float(value)
+    if datatype == "int":
+        # Do not round incomplete progress up to 100%.
+        return int(numeric_value)
+    return round(numeric_value, 1)
+
+
 def get_status_from_calibre(calibre_status: str, status_mappings: dict) -> int | None:
     """
     Get the Hardcover status ID for a Calibre status value.
@@ -372,22 +384,22 @@ def find_sync_from_changes(
         current_progress_pct = hc_book.current_progress_percent
         if sync_progress and progress_percent_col and current_progress_pct is not None:
             current = get_calibre_value(calibre_id, progress_percent_col)
-            new_progress_pct = round(current_progress_pct, 1)
+            col_meta = get_column_metadata(progress_percent_col) if get_column_metadata else None
+            datatype = col_meta.get("datatype") if col_meta else None
+            new_progress_pct = normalize_progress_percent(current_progress_pct, datatype)
             try:
-                current_rounded = (
-                    round(float(current), 1) if current is not None and current != "" else None
-                )
+                current_normalized = normalize_progress_percent(current, datatype)
             except (TypeError, ValueError):
-                current_rounded = None
-            if current_rounded != new_progress_pct:
+                current_normalized = None
+            if current_normalized != new_progress_pct:
                 changes.append(
                     SyncChange(
                         calibre_id=calibre_id,
                         calibre_title=calibre_title,
                         hardcover_book_id=hc_book.book_id,
                         field="progress_percent",
-                        old_value=f"{current_rounded}%"
-                        if current_rounded is not None
+                        old_value=f"{current_normalized}%"
+                        if current_normalized is not None
                         else "(empty)",
                         new_value=f"{new_progress_pct}%",
                         raw_value=str(new_progress_pct),
@@ -655,23 +667,32 @@ def find_sync_to_changes(
             calibre_progress_pct = get_calibre_value(book_id, progress_percent_col)
             if calibre_progress_pct is not None:
                 hc_current_pct = hc_user_book.current_progress_percent if hc_user_book else None
-                # Round for comparison
-                calibre_rounded = round(float(calibre_progress_pct), 1)
-                hc_rounded = round(hc_current_pct, 1) if hc_current_pct is not None else None
-                if calibre_rounded != hc_rounded:
-                    result.changes.append(
-                        SyncToChange(
-                            calibre_id=book_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book_id,
-                            user_book_id=user_book_id,
-                            field="progress_percent",
-                            old_value=f"{hc_rounded}%" if hc_rounded is not None else "(empty)",
-                            new_value=f"{calibre_rounded}%",
-                            api_value=calibre_rounded / 100,  # Convert to 0.0-1.0 for API
+                col_meta = (
+                    get_column_metadata(progress_percent_col) if get_column_metadata else None
+                )
+                datatype = col_meta.get("datatype") if col_meta else None
+                try:
+                    calibre_normalized = normalize_progress_percent(calibre_progress_pct, datatype)
+                except (TypeError, ValueError):
+                    calibre_normalized = None
+                if calibre_normalized is not None:
+                    hc_normalized = normalize_progress_percent(hc_current_pct, datatype)
+                    if calibre_normalized != hc_normalized:
+                        result.changes.append(
+                            SyncToChange(
+                                calibre_id=book_id,
+                                calibre_title=calibre_title,
+                                hardcover_book_id=hc_book_id,
+                                user_book_id=user_book_id,
+                                field="progress_percent",
+                                old_value=f"{hc_normalized}%"
+                                if hc_normalized is not None
+                                else "(empty)",
+                                new_value=f"{calibre_normalized}%",
+                                api_value=calibre_normalized / 100,
+                            )
                         )
-                    )
-                    book_has_changes = True
+                        book_has_changes = True
 
         # Compare date started
         if date_started_col:
@@ -835,7 +856,7 @@ def coerce_value_for_column(value: Any, datatype: str) -> Any:
         return None
 
     if datatype == "int":
-        return int(value)
+        return int(float(value))
     elif datatype == "float":
         return float(value)
     elif datatype == "datetime":

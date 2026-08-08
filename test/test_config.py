@@ -208,3 +208,24 @@ class TestSyncableColumns:
         }
         unmapped = get_unmapped_columns(prefs)
         assert len(unmapped) == 0
+
+
+class TestProgressColumnOptions:
+    """Tests for page and percentage column compatibility."""
+
+    def test_integer_columns_are_available_for_percentage_progress(self):
+        """Integer percentages are offered without changing page column options."""
+        from unittest.mock import Mock
+
+        from hardcover_sync.config import ConfigWidget
+
+        plugin_action = Mock()
+        plugin_action.gui.library_view.model().custom_columns = {
+            "#integer": {"datatype": "int", "name": "Integer"},
+            "#float": {"datatype": "float", "name": "Float"},
+        }
+
+        widget = ConfigWidget(plugin_action=plugin_action)
+
+        assert widget.progress_combo.column_names == ["", "#integer"]
+        assert widget.progress_percent_combo.column_names == ["", "#float", "#integer"]

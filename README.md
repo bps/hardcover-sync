@@ -43,7 +43,7 @@ Create these custom columns in Calibre (**Preferences → Add your own columns**
 | Status | Text | `#hc_status` |
 | Rating | Rating | `#hc_rating` |
 | Progress (pages) | Integer | `#hc_progress` |
-| Progress (%) | Float | `#hc_progress_pct` |
+| Progress (%) | Float or integer | `#hc_progress_pct` |
 | Date Started | Date | `#hc_date_started` |
 | Date Finished | Date | `#hc_date_read` |
 | Review | Long text | `#hc_review` |
@@ -52,7 +52,7 @@ You can use pre-defined Calibre columns as well (e.g. rating).
 
 You can use either or both progress columns:
 - **Progress (pages)** - Integer column for page number (e.g., 150)
-- **Progress (%)** - Float column for percentage (e.g., 50.0)
+- **Progress (%)** - Float or integer column for percentage (e.g., 50.0 or 50)
 
 Hardcover stores both values and converts between them based on the book's page count.
 
