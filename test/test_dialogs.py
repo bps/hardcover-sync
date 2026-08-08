@@ -100,6 +100,69 @@ class TestDialogHelpers:
 
         assert _real_edition_id(book) is None
 
+    def test_link_book_recognizes_and_normalizes_isbn_queries(self):
+        """Test manual search recognizes common ISBN-10 and ISBN-13 formats."""
+        from hardcover_sync.dialogs.link_book import _isbn_from_query
+
+        assert _isbn_from_query("978-0-306-40615-7") == "9780306406157"
+        assert _isbn_from_query("0 8044 2957 x") == "080442957X"
+        assert _isbn_from_query("The Hobbit") is None
+        assert _isbn_from_query("123456789A") is None
+
+    def test_link_book_manual_search_uses_exact_isbn_lookup(self, mocker):
+        """Test ISBN queries use the API's exact ISBN lookup."""
+        from hardcover_sync.dialogs.link_book import _manual_search
+        from hardcover_sync.models import Book, Edition
+
+        api = mocker.Mock()
+        book = Book(
+            id=1,
+            title="Test",
+            editions=[Edition(id=10, isbn_13="9780306406157")],
+        )
+        api.find_book_by_isbn.return_value = book
+
+        results = _manual_search(api, "978-0-306-40615-7")
+
+        api.find_book_by_isbn.assert_called_once_with("9780306406157")
+        api.search_books.assert_not_called()
+        assert [result.book for result in results] == [book]
+        assert results[0].match_type == "isbn"
+        assert results[0].confidence == 1.0
+
+    def test_link_book_manual_search_falls_back_when_isbn_not_found(self, mocker):
+        """Test an ISBN lookup miss falls back to the existing general search."""
+        from hardcover_sync.dialogs.link_book import _manual_search
+        from hardcover_sync.models import Book
+
+        api = mocker.Mock()
+        book = Book(id=1, title="Search Result")
+        api.find_book_by_isbn.return_value = None
+        api.search_books.return_value = [book]
+
+        results = _manual_search(api, "9780000000000")
+
+        api.search_books.assert_called_once_with("9780000000000")
+        assert [result.book for result in results] == [book]
+        assert results[0].match_type == "search"
+
+    def test_link_book_formats_result_isbns(self):
+        """Test the ISBN column includes unique ISBN-13 and ISBN-10 values."""
+        from hardcover_sync.dialogs.link_book import _book_isbns
+        from hardcover_sync.models import Book, Edition
+
+        book = Book(
+            id=1,
+            title="Test",
+            editions=[
+                Edition(id=10, isbn_13="9780306406157", isbn_10="0306406152"),
+                Edition(id=11, isbn_13="9780306406157"),
+            ],
+        )
+
+        assert _book_isbns(book) == "9780306406157, 0306406152"
+        assert _book_isbns(Book(id=2, title="No ISBN", editions=None)) == ""
+
 
 # =============================================================================
 # Test API list methods that dialogs use

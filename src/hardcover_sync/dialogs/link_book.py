@@ -34,7 +34,7 @@ from ..matcher import (
     search_for_calibre_book,
     set_hardcover_slug,
 )
-from ..models import Book
+from ..models import Book, clean_isbn
 
 
 @dataclass
@@ -53,6 +53,54 @@ def _real_edition_id(book: Book) -> int | None:
     if book.editions:
         return normalize_edition_id(book.editions[0].id)
     return None
+
+
+def _isbn_from_query(query: str) -> str | None:
+    """Return a normalized ISBN when the query has an ISBN-10 or ISBN-13 shape."""
+    isbn = clean_isbn(query.strip()).upper()
+    if not isbn.isascii():
+        return None
+    if len(isbn) == 13 and isbn.isdigit():
+        return isbn
+    if len(isbn) == 10 and isbn[:9].isdigit() and (isbn[-1].isdigit() or isbn[-1] == "X"):
+        return isbn
+    return None
+
+
+def _manual_search(api: HardcoverAPI, query: str) -> list[MatchResult]:
+    """Search by exact ISBN when possible, falling back to the general book search."""
+    isbn = _isbn_from_query(query)
+    if isbn:
+        book = api.find_book_by_isbn(isbn)
+        if book:
+            return [
+                MatchResult(
+                    book=book,
+                    match_type="isbn",
+                    confidence=1.0,
+                    message=f"Matched by ISBN: {book.title}",
+                )
+            ]
+
+    return [
+        MatchResult(
+            book=book,
+            match_type="search",
+            confidence=0.5,
+            message=book.title,
+        )
+        for book in api.search_books(query)
+    ]
+
+
+def _book_isbns(book: Book) -> str:
+    """Format the unique ISBNs returned for a book."""
+    isbns: list[str] = []
+    for edition in book.editions or []:
+        for isbn in (edition.isbn_13, edition.isbn_10):
+            if isbn and isbn not in isbns:
+                isbns.append(isbn)
+    return ", ".join(isbns)
 
 
 class LinkBookDialog(QDialog):
@@ -137,8 +185,8 @@ class LinkBookDialog(QDialog):
 
         # Results table
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(4)
-        self.results_table.setHorizontalHeaderLabels(["Title", "Author", "Year", "Match"])
+        self.results_table.setColumnCount(5)
+        self.results_table.setHorizontalHeaderLabels(["Title", "Author", "Year", "ISBN", "Match"])
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.results_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -146,7 +194,9 @@ class LinkBookDialog(QDialog):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(3, 180)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.results_table.itemSelectionChanged.connect(self._on_selection_changed)
         self.results_table.itemDoubleClicked.connect(self._on_double_click)
         layout.addWidget(self.results_table)
@@ -304,20 +354,12 @@ class LinkBookDialog(QDialog):
             return
 
         self.status_label.setText("Searching...")
+        self.search_input.setEnabled(False)
         self.search_button.setEnabled(False)
         self._update_ui()
 
         try:
-            books = api.search_books(query)
-            self.results = [
-                MatchResult(
-                    book=book,
-                    match_type="search",
-                    confidence=0.5,  # Manual search has neutral confidence
-                    message=f"{book.title}",
-                )
-                for book in books
-            ]
+            self.results = _manual_search(api, query)
             self._populate_results()
 
             if self.results:
@@ -327,6 +369,7 @@ class LinkBookDialog(QDialog):
         except Exception as e:
             self.status_label.setText(f"Search error: {e}")
         finally:
+            self.search_input.setEnabled(True)
             self.search_button.setEnabled(True)
 
     def _populate_results(self) -> None:
@@ -357,10 +400,16 @@ class LinkBookDialog(QDialog):
                 year = book.release_date[:4]
             self.results_table.setItem(row, 2, QTableWidgetItem(year))
 
+            # ISBNs
+            isbns = _book_isbns(book)
+            isbn_item = QTableWidgetItem(isbns)
+            isbn_item.setToolTip(isbns)
+            self.results_table.setItem(row, 3, isbn_item)
+
             # Match confidence
             confidence = f"{int(result.confidence * 100)}%"
             match_item = QTableWidgetItem(confidence)
-            self.results_table.setItem(row, 3, match_item)
+            self.results_table.setItem(row, 4, match_item)
 
         # Auto-select first row if results exist
         if self.results:
