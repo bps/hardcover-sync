@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-08-08
+
+### Bug Fixes
+
+- Exclude test directories from plugin bundle
+- Support integer progress percentages
+- Include percentage progress in mapping diagnostics
+- Isolate bundled dependency imports
+
+### Documentation
+
+- Add Hardcover link status column tip
+
+### Features
+
+- Support ISBN searches in link dialog
 ## [0.3.2] - 2026-06-21
 
 ### Bug Fixes
@@ -10,6 +26,10 @@ All notable changes to this project will be documented in this file.
 - Reject non-positive Hardcover edition IDs
 - Repair sync edge cases
 - Store Hardcover book IDs when linking
+
+### Documentation
+
+- Update changelog for v0.3.2
 ## [0.3.1] - 2026-05-20
 
 ### Bug Fixes
