@@ -41,7 +41,8 @@ STATUS_IDS = {v: k for k, v in READING_STATUSES.items()}
 SYNCABLE_COLUMNS = [
     ("status_column", "Status"),
     ("rating_column", "Rating"),
-    ("progress_column", "Progress"),
+    ("progress_column", "Progress (pages)"),
+    ("progress_percent_column", "Progress (%)"),
     ("date_started_column", "Date Started"),
     ("date_read_column", "Date Read"),
     ("is_read_column", "Is Read"),
@@ -144,10 +145,6 @@ def get_column_mappings(plugin_prefs: Any = None) -> dict[str, str]:
         if col:
             field = pref_key.removesuffix("_column")
             mappings[field] = col
-    # Also include progress_percent which isn't in SYNCABLE_COLUMNS
-    progress_pct = plugin_prefs.get("progress_percent_column", "")
-    if progress_pct:
-        mappings["progress_percent"] = progress_pct
     return mappings
 
 
