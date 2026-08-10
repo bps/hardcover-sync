@@ -5,13 +5,11 @@ This module provides the HardcoverAPI class for interacting with
 the Hardcover.app GraphQL API.
 """
 
+import json
 from datetime import date
 from typing import Any
-
-from gql import Client, gql  # noqa: E402
-from gql.graphql_request import GraphQLRequest  # noqa: E402
-from gql.transport.exceptions import TransportQueryError  # noqa: E402
-from gql.transport.requests import RequestsHTTPTransport  # noqa: E402
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from . import queries  # noqa: E402
 from .models import (  # noqa: E402
@@ -29,6 +27,97 @@ from .models import (  # noqa: E402
 # API Configuration
 API_URL = "https://api.hardcover.app/v1/graphql"
 DEFAULT_TIMEOUT = 30  # seconds
+_MAX_ERROR_MESSAGE_LENGTH = 500
+
+
+class GraphQLResponseError(Exception):
+    """Raised when Hardcover returns a GraphQL error or invalid response."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message[:_MAX_ERROR_MESSAGE_LENGTH])
+        self.status = status
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Do not send the API token to a redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class HardcoverHTTPClient:
+    """Minimal synchronous client for Hardcover's GraphQL endpoint."""
+
+    def __init__(self, token: str, timeout: int = DEFAULT_TIMEOUT) -> None:
+        self.token = token
+        self.timeout = timeout
+        self.opener = build_opener(_NoRedirectHandler())
+
+    @staticmethod
+    def _error_message(errors: object) -> str:
+        if isinstance(errors, list):
+            messages = [
+                str(error.get("message", error)) if isinstance(error, dict) else str(error)
+                for error in errors
+            ]
+            return "; ".join(messages)
+        if isinstance(errors, dict):
+            return str(errors.get("message", errors))
+        return str(errors)
+
+    @classmethod
+    def _extract_data(cls, payload: object, status: int | None = None) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise GraphQLResponseError("GraphQL response was not a JSON object", status)
+
+        errors = payload.get("errors")
+        if errors:
+            raise GraphQLResponseError(cls._error_message(errors), status)
+
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise GraphQLResponseError("GraphQL response did not contain data", status)
+        return data
+
+    def execute(
+        self,
+        query: str,
+        variables: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"query": query}
+        if variables is not None:
+            payload["variables"] = variables
+
+        request = Request(  # noqa: S310 - API_URL is a fixed HTTPS endpoint
+            API_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+                "User-Agent": "hardcover-sync-calibre-plugin",
+            },
+            method="POST",
+        )
+
+        try:
+            with self.opener.open(request, timeout=self.timeout) as response:  # noqa: S310
+                response_body = response.read()
+        except HTTPError as error:
+            if error.code < 400:
+                raise error from None
+            response_body = error.read()
+            try:
+                error_payload = json.loads(response_body)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                raise error from None
+            return self._extract_data(error_payload, status=error.code)
+
+        try:
+            response_payload = json.loads(response_body)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise GraphQLResponseError("Server did not return valid JSON") from error
+        return self._extract_data(response_payload)
 
 
 class HardcoverAPIError(Exception):
@@ -75,20 +164,15 @@ class HardcoverAPI:
         self.token = token
         self.timeout = timeout
         self.dry_run = dry_run
-        self._client: Client | None = None
+        self._client: HardcoverHTTPClient | None = None
         self._user: User | None = None
         self._dry_run_log: list[dict] = []  # Log of operations that would have been performed
 
     @property
-    def client(self) -> Client:
-        """Get or create the GraphQL client."""
+    def client(self) -> HardcoverHTTPClient:
+        """Get or create the Hardcover HTTP client."""
         if self._client is None:
-            transport = RequestsHTTPTransport(
-                url=API_URL,
-                headers={"Authorization": f"Bearer {self.token}"},
-                timeout=self.timeout,
-            )
-            self._client = Client(transport=transport, fetch_schema_from_transport=False)
+            self._client = HardcoverHTTPClient(token=self.token, timeout=self.timeout)
         return self._client
 
     def _execute(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -108,16 +192,22 @@ class HardcoverAPI:
             HardcoverAPIError: For other API errors.
         """
         try:
-            request = GraphQLRequest(gql(query), variable_values=variables)
-            result = self.client.execute(request)
-            return result
-        except TransportQueryError as e:
+            return self.client.execute(query, variables)
+        except GraphQLResponseError as e:
             error_msg = str(e)
-            if "unauthorized" in error_msg.lower() or "invalid" in error_msg.lower():
+            if e.status in {401, 403} or any(
+                text in error_msg.lower() for text in ("unauthorized", "invalid")
+            ):
                 raise AuthenticationError("Invalid API token") from e
-            if "rate limit" in error_msg.lower():
+            if e.status == 429 or "rate limit" in error_msg.lower():
                 raise RateLimitError("Rate limit exceeded (60 requests/minute)") from e
             raise HardcoverAPIError(f"API error: {error_msg}") from e
+        except HTTPError as e:
+            if e.code in {401, 403}:
+                raise AuthenticationError("Invalid API token") from e
+            if e.code == 429:
+                raise RateLimitError("Rate limit exceeded (60 requests/minute)") from e
+            raise HardcoverAPIError(f"Request failed: HTTP {e.code}") from e
         except Exception as e:
             raise HardcoverAPIError(f"Request failed: {e}") from e
 

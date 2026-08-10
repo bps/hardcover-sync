@@ -25,8 +25,9 @@ echo "Building $PLUGIN_NAME version $VERSION..."
 BUILD_DIR=$(mktemp -d)
 trap "rm -rf $BUILD_DIR" EXIT
 
-# Install package with dependencies (excluding dev deps)
+# Install the package without reusing stale setuptools output from earlier builds.
 echo "Installing package to build directory..."
+rm -rf "$PROJECT_DIR/build"
 uv pip install . --target "$BUILD_DIR" --quiet --reinstall-package hardcover-sync
 
 # Move plugin package contents to root of build directory

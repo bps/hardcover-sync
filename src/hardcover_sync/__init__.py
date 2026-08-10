@@ -5,13 +5,6 @@ This plugin allows bidirectional synchronization of reading status,
 ratings, progress, and lists between Calibre and Hardcover.app.
 """
 
-from ._bundled_imports import install_bundled_dependency_finder
-
-# Calibre only exposes plugin ZIP contents through the plugin's namespace. Resolve
-# bundled dependencies through that namespace without changing the process-wide
-# module search path.
-install_bundled_dependency_finder(__package__)
-
 # Calibre imports - only available in Calibre's runtime environment
 from calibre.customize import InterfaceActionBase  # noqa: E402
 
