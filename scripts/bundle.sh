@@ -16,8 +16,8 @@ PACKAGE_NAME="hardcover_sync"
 
 cd "$PROJECT_DIR"
 
-# Get version from git tag (strip 'v' prefix)
-VERSION=$(git describe --tags --always 2>/dev/null | sed 's/^v//' || echo "0.0.0.dev0")
+# Exact release tags keep their version; other builds include the commit ID.
+VERSION=$(bash "$SCRIPT_DIR/bundle-version.bash" "$PROJECT_DIR")
 
 echo "Building $PLUGIN_NAME version $VERSION..."
 

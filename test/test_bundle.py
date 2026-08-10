@@ -66,6 +66,19 @@ class TestBundleContents:
         with zipfile.ZipFile(plugin_zip_path) as plugin_zip:
             assert plugin_zip.namelist()
 
+    def test_zip_name_uses_build_version(self, plugin_zip_path):
+        """Verify the artifact filename uses the shared version calculation."""
+        project_root = Path(__file__).parent.parent
+        version = subprocess.run(  # noqa: S603
+            ["bash", "scripts/bundle-version.bash", str(project_root)],  # noqa: S607
+            cwd=project_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        assert plugin_zip_path.name == f"hardcover-sync-{version}.zip"
+
     def test_required_plugin_files_present(self, plugin_zip_path):
         """Verify all required plugin files are at the ZIP root."""
         with zipfile.ZipFile(plugin_zip_path) as plugin_zip:
