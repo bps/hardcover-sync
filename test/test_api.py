@@ -12,6 +12,7 @@ from hardcover_sync.api import (
     AuthenticationError,
     HardcoverAPI,
     HardcoverAPIError,
+    GraphQLResponseError,
     RateLimitError,
     UserBook,
     UserBookRead,
@@ -26,7 +27,7 @@ from hardcover_sync.api import (
 @pytest.fixture
 def mock_client():
     """Create a mock GraphQL client."""
-    with patch("hardcover_sync.api.Client") as mock:
+    with patch("hardcover_sync.api.HardcoverHTTPClient") as mock:
         yield mock
 
 
@@ -64,9 +65,7 @@ class TestGetMe:
 
     def test_get_me_invalid_token(self, api, mock_client):
         """Test authentication error on invalid token."""
-        from gql.transport.exceptions import TransportQueryError
-
-        mock_client.return_value.execute.side_effect = TransportQueryError(
+        mock_client.return_value.execute.side_effect = GraphQLResponseError(
             "unauthorized: invalid token"
         )
 
@@ -98,9 +97,7 @@ class TestValidateToken:
 
     def test_validate_token_invalid(self, api, mock_client):
         """Test invalid token validation."""
-        from gql.transport.exceptions import TransportQueryError
-
-        mock_client.return_value.execute.side_effect = TransportQueryError("unauthorized")
+        mock_client.return_value.execute.side_effect = GraphQLResponseError("unauthorized")
 
         is_valid, user = api.validate_token()
 
@@ -488,9 +485,21 @@ class TestErrorHandling:
 
     def test_rate_limit_error(self, api, mock_client):
         """Test rate limit error handling."""
-        from gql.transport.exceptions import TransportQueryError
+        mock_client.return_value.execute.side_effect = GraphQLResponseError("rate limit exceeded")
 
-        mock_client.return_value.execute.side_effect = TransportQueryError("rate limit exceeded")
+        with pytest.raises(RateLimitError):
+            api.get_me()
+
+    def test_http_authentication_error(self, api, mock_client):
+        """Test authentication classification from an HTTP status."""
+        mock_client.return_value.execute.side_effect = GraphQLResponseError("forbidden", status=403)
+
+        with pytest.raises(AuthenticationError):
+            api.get_me()
+
+    def test_http_rate_limit_error(self, api, mock_client):
+        """Test rate-limit classification from an HTTP status."""
+        mock_client.return_value.execute.side_effect = GraphQLResponseError("slow down", status=429)
 
         with pytest.raises(RateLimitError):
             api.get_me()
@@ -1657,13 +1666,11 @@ class TestSearchBooksEdgeCases:
 
 
 class TestExecuteGenericError:
-    """Test generic TransportQueryError handling in _execute."""
+    """Test generic GraphQL error handling in _execute."""
 
-    def test_generic_transport_query_error(self, api, mock_client):
-        """TransportQueryError without auth/rate keywords raises HardcoverAPIError."""
-        from gql.transport.exceptions import TransportQueryError
-
-        mock_client.return_value.execute.side_effect = TransportQueryError("something went wrong")
+    def test_generic_graphql_error(self, api, mock_client):
+        """GraphQL errors without auth/rate keywords raise HardcoverAPIError."""
+        mock_client.return_value.execute.side_effect = GraphQLResponseError("something went wrong")
 
         with pytest.raises(HardcoverAPIError, match="API error"):
             api.get_me()

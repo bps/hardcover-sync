@@ -21,12 +21,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Other/Nonlisted Topic",
 ]
-dependencies = [
-    # Bundle unconditionally so Python 3.12 release builds also run on Calibre's Python 3.10.
-    "exceptiongroup>=1.2.0",
-    "gql[requests]>=3.5.0",
-]
-
 [project.urls]
 Homepage = "https://github.com/bps/hardcover-sync"
 Documentation = "https://github.com/bps/hardcover-sync#readme"
