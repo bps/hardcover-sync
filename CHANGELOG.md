@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-08-10
+
+### Bug Fixes
+
+- Prevent API token validation failures caused by conflicting GraphQL packages (#16)
+
+### Build
+
+- Suffix development artifacts with commit
 ## [0.4.0] - 2026-08-08
 
 ### Bug Fixes
