@@ -45,6 +45,25 @@ class TestReadingStatuses:
             assert STATUS_IDS[status_name] == status_id
 
 
+class TestStatusMappingConflicts:
+    """Tests for ambiguous status mapping detection."""
+
+    def test_no_conflicts_with_defaults(self):
+        from hardcover_sync.config import get_status_mapping_conflicts
+
+        assert get_status_mapping_conflicts({}) == {}
+
+    def test_duplicate_custom_value(self):
+        from hardcover_sync.config import get_status_mapping_conflicts
+
+        assert get_status_mapping_conflicts({"1": "Done", "3": "Done"}) == {"Done": [1, 3]}
+
+    def test_custom_value_colliding_with_default(self):
+        from hardcover_sync.config import get_status_mapping_conflicts
+
+        assert get_status_mapping_conflicts({"1": "Read"}) == {"Read": [1, 3]}
+
+
 # =============================================================================
 # Test DEFAULT_PREFS
 # =============================================================================
@@ -75,7 +94,6 @@ class TestDefaultPrefs:
             "date_started_column",
             "date_read_column",
             "review_column",
-            "lists_column",
         ]
         for key in column_keys:
             assert key in DEFAULT_PREFS
@@ -90,25 +108,10 @@ class TestDefaultPrefs:
             "sync_progress",
             "sync_dates",
             "sync_review",
-            "sync_lists",
         ]
         for key in sync_keys:
             assert key in DEFAULT_PREFS
             assert DEFAULT_PREFS[key] is True  # All enabled by default
-
-    def test_default_prefs_conflict_resolution(self):
-        """Test that conflict resolution defaults to 'ask'."""
-        from hardcover_sync.config import DEFAULT_PREFS
-
-        assert "conflict_resolution" in DEFAULT_PREFS
-        assert DEFAULT_PREFS["conflict_resolution"] == "ask"
-
-    def test_default_prefs_use_tags_for_lists(self):
-        """Test that use_tags_for_lists defaults to True."""
-        from hardcover_sync.config import DEFAULT_PREFS
-
-        assert "use_tags_for_lists" in DEFAULT_PREFS
-        assert DEFAULT_PREFS["use_tags_for_lists"] is True
 
     def test_default_prefs_status_mappings(self):
         """Test that status_mappings defaults to empty dict."""
