@@ -756,7 +756,7 @@ class TestFindSyncFromChangesProgress:
 
     def test_progress_percent_change(self):
         """Test detecting progress percent changes."""
-        hc_books = [self.create_user_book_with_reads(100, progress=0.75)]  # 75%
+        hc_books = [self.create_user_book_with_reads(100, progress=75.0)]
         hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
@@ -783,7 +783,7 @@ class TestFindSyncFromChangesProgress:
 
     def test_progress_percent_empty_to_value(self):
         """Test progress percent change from empty to value."""
-        hc_books = [self.create_user_book_with_reads(100, progress=0.25)]
+        hc_books = [self.create_user_book_with_reads(100, progress=25.0)]
         hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
@@ -808,7 +808,7 @@ class TestFindSyncFromChangesProgress:
 
     def test_progress_percent_valid(self):
         """Test detecting progress percent changes and is a valid percentage."""
-        hc_books = [self.create_user_book_with_reads(100, progress=0.75)]  # 75%
+        hc_books = [self.create_user_book_with_reads(100, progress=75.0)]
         hc_to_calibre = {"test-book": 1}
 
         def get_value(calibre_id, col):
@@ -833,7 +833,7 @@ class TestFindSyncFromChangesProgress:
 
     def test_float_progress_percent_uses_column_precision(self):
         """Equivalent decimal progress does not produce a float-column change."""
-        hc_books = [self.create_user_book_with_reads(100, progress=0.4567)]
+        hc_books = [self.create_user_book_with_reads(100, progress=45.67)]
         prefs = {
             "status_column": "",
             "progress_percent_column": "#progress_pct",
@@ -876,7 +876,7 @@ class TestFindSyncFromChangesProgress:
 
     def test_integer_progress_percent_uses_column_precision(self):
         """Decimal Hardcover progress equal to an integer column does not resync."""
-        hc_books = [self.create_user_book_with_reads(100, progress=0.437)]
+        hc_books = [self.create_user_book_with_reads(100, progress=43.7)]
         prefs = {
             "status_column": "",
             "progress_percent_column": "#progress_pct",
@@ -896,7 +896,7 @@ class TestFindSyncFromChangesProgress:
 
     def test_integer_progress_percent_change_is_integer(self):
         """Hardcover progress is converted before writing an integer column."""
-        hc_books = [self.create_user_book_with_reads(100, progress=0.437)]
+        hc_books = [self.create_user_book_with_reads(100, progress=43.7)]
         prefs = {
             "status_column": "",
             "progress_percent_column": "#progress_pct",
@@ -1493,7 +1493,7 @@ class TestFindSyncToChanges:
 
     def _make_book(self, book_id: int = 100) -> Book:
         """Helper to create a simple Book."""
-        return Book(id=book_id, title="Test Book", slug="test-book")
+        return Book(id=book_id, title="Test Book", slug="test-book", pages=400)
 
     def _call(
         self,
@@ -1792,7 +1792,7 @@ class TestFindSyncToChanges:
 
     def test_progress_percent_change_detected(self):
         """Detects progress percent difference."""
-        hc_user_book = self._make_user_book(progress=0.50)  # 50%
+        hc_user_book = self._make_user_book(progress=50.0)
         result = self._call(
             prefs={
                 "status_column": "",
@@ -1805,11 +1805,11 @@ class TestFindSyncToChanges:
         pct_changes = [c for c in result.changes if c.field == "progress_percent"]
         assert len(pct_changes) == 1
         assert "75.0%" in pct_changes[0].new_value
-        assert pct_changes[0].api_value == 0.75  # converted to 0-1 for API
+        assert pct_changes[0].api_value == 300  # converted to pages for the API
 
     def test_progress_percent_no_change_when_equal(self):
         """No change when progress percent matches (after rounding)."""
-        hc_user_book = self._make_user_book(progress=0.50)  # 50%
+        hc_user_book = self._make_user_book(progress=50.0)
         result = self._call(
             prefs={
                 "status_column": "",
@@ -1839,7 +1839,7 @@ class TestFindSyncToChanges:
 
     def test_integer_progress_percent_no_change_at_column_precision(self):
         """Integer progress does not overwrite equivalent decimal Hardcover progress."""
-        hc_user_book = self._make_user_book(progress=0.437)
+        hc_user_book = self._make_user_book(progress=43.7)
         result = self._call(
             prefs={
                 "status_column": "",
@@ -1856,7 +1856,7 @@ class TestFindSyncToChanges:
 
     def test_integer_progress_percent_change_uses_integer_value(self):
         """Integer percentage changes are pushed using the stored precision."""
-        hc_user_book = self._make_user_book(progress=0.437)
+        hc_user_book = self._make_user_book(progress=43.7)
         result = self._call(
             prefs={
                 "status_column": "",
@@ -1870,7 +1870,7 @@ class TestFindSyncToChanges:
 
         pct_changes = [c for c in result.changes if c.field == "progress_percent"]
         assert len(pct_changes) == 1
-        assert pct_changes[0].api_value == 0.45
+        assert pct_changes[0].api_value == 180
 
     def test_invalid_progress_percent_is_skipped(self):
         """A non-numeric percentage does not abort sync-to analysis."""
@@ -1881,7 +1881,7 @@ class TestFindSyncToChanges:
                 "progress_percent_column": "#pct",
             },
             calibre_values={(1, "#pct"): "not a number"},
-            user_books={100: self._make_user_book(progress=0.5)},
+            user_books={100: self._make_user_book(progress=50.0)},
             column_metadata={"#pct": {"datatype": "float"}},
         )
 
@@ -1896,11 +1896,150 @@ class TestFindSyncToChanges:
                 "progress_percent_column": "#pct",
             },
             calibre_values={(1, "#pct"): ""},
-            user_books={100: self._make_user_book(progress=0.5)},
+            user_books={100: self._make_user_book(progress=50.0)},
             column_metadata={"#pct": {"datatype": "float"}},
         )
 
         assert [c for c in result.changes if c.field == "progress_percent"] == []
+
+    def test_progress_percent_uses_linked_edition_pages(self):
+        """Percentage progress uses and sends the explicitly linked edition."""
+        book = Book(
+            id=100,
+            title="Test Book",
+            slug="test-book",
+            pages=400,
+            editions=[Edition(id=9, pages=320)],
+        )
+        result = self._call(
+            identifiers={1: {"hardcover": "100", "hardcover-edition": "9"}},
+            resolved_books={"100": book},
+            prefs={"progress_percent_column": "#pct", "status_mappings": {}},
+            calibre_values={(1, "#pct"): 100.0},
+        )
+
+        change = next(c for c in result.changes if c.field == "progress_percent")
+        assert change.api_value == 320
+        assert change.edition_id == 9
+
+    def test_progress_percent_preserves_existing_read_edition(self):
+        """An existing read edition wins over a different linked edition."""
+        read_edition = Edition(id=8, pages=200)
+        user_book = self._make_user_book(progress_pages=40, progress=20.0)
+        user_book.reads[0].edition_id = 8
+        user_book.reads[0].edition = read_edition
+        book = Book(
+            id=100,
+            title="Test Book",
+            slug="test-book",
+            editions=[read_edition, Edition(id=9, pages=320)],
+        )
+        result = self._call(
+            identifiers={1: {"hardcover": "100", "hardcover-edition": "9"}},
+            resolved_books={"100": book},
+            user_books={100: user_book},
+            prefs={"progress_percent_column": "#pct", "status_mappings": {}},
+            calibre_values={(1, "#pct"): 50.0},
+        )
+
+        change = next(c for c in result.changes if c.field == "progress_percent")
+        assert change.api_value == 100
+        assert change.edition_id == 8
+
+    def test_progress_percent_preserves_existing_read_without_edition(self):
+        """A no-edition read keeps Hardcover's book-page basis."""
+        user_book = self._make_user_book(progress_pages=200, progress=50.0)
+        book = Book(
+            id=100,
+            title="Test Book",
+            slug="test-book",
+            pages=400,
+            editions=[Edition(id=9, pages=800)],
+        )
+        result = self._call(
+            identifiers={1: {"hardcover": "100", "hardcover-edition": "9"}},
+            resolved_books={"100": book},
+            user_books={100: user_book},
+            prefs={"progress_percent_column": "#pct", "status_mappings": {}},
+            calibre_values={(1, "#pct"): 60.0},
+        )
+
+        change = next(c for c in result.changes if c.field == "progress_percent")
+        assert change.api_value == 240
+        assert change.edition_id is None
+
+    def test_progress_percent_uses_selected_user_book_edition(self):
+        """A selected user-book edition is used when there is no read edition."""
+        edition = Edition(id=7, pages=300)
+        user_book = self._make_user_book()
+        user_book.edition_id = edition.id
+        user_book.edition = edition
+        result = self._call(
+            user_books={100: user_book},
+            prefs={"progress_percent_column": "#pct", "status_mappings": {}},
+            calibre_values={(1, "#pct"): 25.0},
+        )
+
+        change = next(c for c in result.changes if c.field == "progress_percent")
+        assert change.api_value == 75
+        assert change.edition_id == 7
+
+    def test_progress_percent_missing_pages_warns_but_keeps_other_changes(self):
+        """Missing edition pages skip only percentage progress."""
+        user_book = self._make_user_book(status_id=1)
+        user_book.edition_id = 7
+        user_book.edition = Edition(id=7, pages=None)
+        result = self._call(
+            user_books={100: user_book},
+            prefs={
+                "status_column": "#status",
+                "progress_percent_column": "#pct",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#status"): "Read", (1, "#pct"): 50.0},
+        )
+
+        assert [c.field for c in result.changes] == ["status"]
+        assert len(result.warnings) == 1
+        assert "selected Hardcover edition has no page count" in result.warnings[0]
+
+    def test_progress_pages_win_when_both_columns_have_values(self):
+        """Explicit page progress takes precedence over percentage progress."""
+        result = self._call(
+            prefs={
+                "progress_column": "#pages",
+                "progress_percent_column": "#pct",
+                "status_mappings": {},
+            },
+            calibre_values={(1, "#pages"): 123, (1, "#pct"): 75.0},
+        )
+
+        assert [(change.field, change.api_value) for change in result.changes] == [
+            ("progress", 123)
+        ]
+
+    def test_integer_percentage_round_trip_does_not_resync(self):
+        """Lossy integer percentages do not overwrite equivalent page progress."""
+        user_book = self._make_user_book(progress_pages=131, progress=43.6666666667)
+        result = self._call(
+            user_books={100: user_book},
+            prefs={"progress_percent_column": "#pct", "status_mappings": {}},
+            calibre_values={(1, "#pct"): 43},
+            column_metadata={"#pct": {"datatype": "int"}},
+            resolved_books={"100": Book(id=100, title="Test Book", slug="test-book", pages=300)},
+        )
+
+        assert [c for c in result.changes if c.field == "progress_percent"] == []
+
+    def test_out_of_range_percentage_is_skipped_with_warning(self):
+        """Percentages outside 0-100 are never converted to pages."""
+        result = self._call(
+            prefs={"progress_percent_column": "#pct", "status_mappings": {}},
+            calibre_values={(1, "#pct"): 101.0},
+        )
+
+        assert result.changes == []
+        assert "outside the 0-100 range" in result.warnings[0]
 
     # --- Date started tests ---
 

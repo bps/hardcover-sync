@@ -54,7 +54,7 @@ You can use either or both progress columns:
 - **Progress (pages)** - Integer column for page number (e.g., 150)
 - **Progress (%)** - Float or integer column for percentage (e.g., 50.0 or 50)
 
-Hardcover stores both values and converts between them based on the book's page count.
+Hardcover stores page progress and calculates the percentage from the book's page count. When syncing to Hardcover with both columns populated, Progress (pages) takes precedence. Percentage progress is skipped with a warning when the linked Hardcover edition has no page count.
 
 For a read-only column showing whether each book has a Hardcover identifier, see [Tips & tricks](#tips--tricks).
 

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .models import UserBook
+from .models import Book, Edition, UserBook
 from .config import READING_STATUSES, STATUS_IDS, get_column_mappings
 
 
@@ -81,7 +81,52 @@ class SyncToChange(BaseSyncChange):
 
     user_book_id: int | None = None  # None if book not in Hardcover library
     api_value: Any = None  # The value to send to the API
+    edition_id: int | None = None  # Edition associated with a progress update
     apply: bool = True
+
+
+def build_sync_to_payloads(
+    changes: list[SyncToChange], status_mappings: dict
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build Hardcover user-book and read payloads from selected changes."""
+    user_book_data: dict[str, Any] = {}
+    read_data: dict[str, Any] = {}
+    calibre_to_hc_status = {value: int(key) for key, value in status_mappings.items()}
+    has_page_progress = any(change.field == "progress" for change in changes)
+
+    for change in changes:
+        if change.field == "status" and change.new_value:
+            status_id = int(change.api_value) if change.api_value is not None else None
+            if status_id is None:
+                status_id = calibre_to_hc_status.get(change.new_value)
+            if status_id is None:
+                status_id = STATUS_IDS.get(change.new_value)
+            if status_id:
+                user_book_data["status_id"] = status_id
+        elif change.field == "rating":
+            user_book_data["rating"] = (
+                float(change.api_value) if change.api_value is not None else None
+            )
+        elif change.field == "progress":
+            read_data["progress_pages"] = (
+                int(change.api_value) if change.api_value is not None else None
+            )
+            if change.edition_id is not None:
+                read_data["edition_id"] = change.edition_id
+        elif change.field == "progress_percent" and not has_page_progress:
+            read_data["progress_pages"] = (
+                int(change.api_value) if change.api_value is not None else None
+            )
+            if change.edition_id is not None:
+                read_data["edition_id"] = change.edition_id
+        elif change.field == "date_started":
+            read_data["started_at"] = change.api_value or change.new_value
+        elif change.field == "date_read":
+            read_data["finished_at"] = change.api_value or change.new_value
+        elif change.field == "review":
+            user_book_data["review"] = change.api_value or change.new_value
+
+    return user_book_data, read_data
 
 
 @dataclass
@@ -226,6 +271,78 @@ def normalize_progress_percent(value: Any, datatype: str | None = None) -> int |
         # Do not round incomplete progress up to 100%.
         return int(numeric_value)
     return round(numeric_value, 1)
+
+
+def _positive_int(value: Any) -> int | None:
+    """Return a positive integer ID, or None."""
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result > 0 else None
+
+
+def _find_edition(book: Book, edition_id: int) -> Edition | None:
+    """Find an edition in a resolved book."""
+    return next((edition for edition in book.editions or [] if edition.id == edition_id), None)
+
+
+def _progress_basis(
+    identifiers: dict[str, str],
+    book: Book,
+    user_book: UserBook | None,
+) -> tuple[int | None, int | None, str | None]:
+    """Choose the edition and page count used to convert percentage progress."""
+    latest_read = user_book.latest_read if user_book else None
+    if latest_read:
+        if latest_read.edition_id:
+            edition = latest_read.edition or _find_edition(book, latest_read.edition_id)
+            if edition and edition.pages and edition.pages > 0:
+                return latest_read.edition_id, edition.pages, None
+            if edition is None:
+                return latest_read.edition_id, None, "the current read edition was not found"
+            return (
+                latest_read.edition_id,
+                None,
+                "the current Hardcover read edition has no page count",
+            )
+        if book.pages and book.pages > 0:
+            # Preserve Hardcover's existing no-edition basis for this read.
+            return None, book.pages, None
+        return None, None, "the current Hardcover read has no usable book page count"
+
+    linked_edition_id = _positive_int(identifiers.get("hardcover-edition"))
+    if linked_edition_id:
+        edition = _find_edition(book, linked_edition_id)
+        if edition is None:
+            return linked_edition_id, None, "the linked Hardcover edition was not found"
+        if edition.pages and edition.pages > 0:
+            return linked_edition_id, edition.pages, None
+        return linked_edition_id, None, "the linked Hardcover edition has no page count"
+
+    if user_book and user_book.edition_id:
+        edition = user_book.edition or _find_edition(book, user_book.edition_id)
+        if edition is None:
+            return user_book.edition_id, None, "the selected Hardcover edition was not found"
+        if edition.pages and edition.pages > 0:
+            return user_book.edition_id, edition.pages, None
+        return user_book.edition_id, None, "the selected Hardcover edition has no page count"
+
+    if book.pages and book.pages > 0:
+        # With no edition selected, Hardcover itself computes progress against book.pages.
+        return None, book.pages, None
+
+    return None, None, "Hardcover has no edition page count"
+
+
+def _progress_edition_id(identifiers: dict[str, str], user_book: UserBook | None) -> int | None:
+    """Choose an edition for a direct page-progress update without changing an existing read."""
+    latest_read = user_book.latest_read if user_book else None
+    if latest_read:
+        return latest_read.edition_id
+    return _positive_int(identifiers.get("hardcover-edition")) or (
+        user_book.edition_id if user_book else None
+    )
 
 
 def get_status_from_calibre(calibre_status: str, status_mappings: dict) -> int | None:
@@ -501,6 +618,7 @@ class SyncToResult:
     not_linked_count: int = 0
     api_errors: int = 0
     books_with_changes: int = 0
+    warnings: list[str] = field(default_factory=list)
 
 
 def find_sync_to_changes(
@@ -640,33 +758,33 @@ def find_sync_to_changes(
                     )
                     book_has_changes = True
 
-        # Compare progress (pages)
-        if progress_col:
-            calibre_progress = get_calibre_value(book_id, progress_col)
-            if calibre_progress is not None:
-                hc_current_progress = hc_user_book.current_progress_pages if hc_user_book else None
-                if calibre_progress != hc_current_progress:
-                    result.changes.append(
-                        SyncToChange(
-                            calibre_id=book_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book_id,
-                            user_book_id=user_book_id,
-                            field="progress",
-                            old_value=str(hc_current_progress)
-                            if hc_current_progress is not None
-                            else "(empty)",
-                            new_value=str(calibre_progress),
-                            api_value=calibre_progress,
-                        )
+        # Compare progress (pages). When both progress columns have values, pages win.
+        calibre_progress = get_calibre_value(book_id, progress_col) if progress_col else None
+        if calibre_progress is not None:
+            hc_current_progress = hc_user_book.current_progress_pages if hc_user_book else None
+            if calibre_progress != hc_current_progress:
+                result.changes.append(
+                    SyncToChange(
+                        calibre_id=book_id,
+                        calibre_title=calibre_title,
+                        hardcover_book_id=hc_book_id,
+                        user_book_id=user_book_id,
+                        field="progress",
+                        old_value=str(hc_current_progress)
+                        if hc_current_progress is not None
+                        else "(empty)",
+                        new_value=str(calibre_progress),
+                        api_value=calibre_progress,
+                        edition_id=_progress_edition_id(identifiers, hc_user_book),
                     )
-                    book_has_changes = True
+                )
+                book_has_changes = True
 
-        # Compare progress (percent)
-        if progress_percent_col:
+        # Hardcover accepts page progress as input. Convert a percentage using the
+        # edition that Hardcover will associate with the read.
+        if progress_percent_col and calibre_progress is None:
             calibre_progress_pct = get_calibre_value(book_id, progress_percent_col)
-            if calibre_progress_pct is not None:
-                hc_current_pct = hc_user_book.current_progress_percent if hc_user_book else None
+            if calibre_progress_pct is not None and calibre_progress_pct != "":
                 col_meta = (
                     get_column_metadata(progress_percent_col) if get_column_metadata else None
                 )
@@ -675,24 +793,55 @@ def find_sync_to_changes(
                     calibre_normalized = normalize_progress_percent(calibre_progress_pct, datatype)
                 except (TypeError, ValueError):
                     calibre_normalized = None
-                if calibre_normalized is not None:
-                    hc_normalized = normalize_progress_percent(hc_current_pct, datatype)
-                    if calibre_normalized != hc_normalized:
-                        result.changes.append(
-                            SyncToChange(
-                                calibre_id=book_id,
-                                calibre_title=calibre_title,
-                                hardcover_book_id=hc_book_id,
-                                user_book_id=user_book_id,
-                                field="progress_percent",
-                                old_value=f"{hc_normalized}%"
-                                if hc_normalized is not None
-                                else "(empty)",
-                                new_value=f"{calibre_normalized}%",
-                                api_value=calibre_normalized / 100,
-                            )
+
+                if calibre_normalized is None:
+                    result.warnings.append(
+                        f"{calibre_title}: skipped percentage progress because it is not numeric"
+                    )
+                elif not 0 <= float(calibre_normalized) <= 100:
+                    result.warnings.append(
+                        f"{calibre_title}: skipped percentage progress outside the 0-100 range"
+                    )
+                else:
+                    edition_id, page_count, warning = _progress_basis(
+                        identifiers, hc_book, hc_user_book
+                    )
+                    if page_count is None:
+                        result.warnings.append(
+                            f"{calibre_title}: skipped percentage progress because {warning}"
                         )
-                        book_has_changes = True
+                    else:
+                        hc_current_pct = (
+                            hc_user_book.current_progress_percent if hc_user_book else None
+                        )
+                        hc_current_pages = (
+                            hc_user_book.current_progress_pages if hc_user_book else None
+                        )
+                        if hc_current_pages is not None:
+                            # Compare using the same denominator as the pending write.
+                            hc_current_pct = hc_current_pages / page_count * 100
+                        hc_normalized = normalize_progress_percent(hc_current_pct, datatype)
+                        target_pages = round(page_count * float(calibre_normalized) / 100)
+
+                        # Compare at the Calibre column's precision first so a
+                        # percent->pages round trip does not continually resync.
+                        if calibre_normalized != hc_normalized and target_pages != hc_current_pages:
+                            result.changes.append(
+                                SyncToChange(
+                                    calibre_id=book_id,
+                                    calibre_title=calibre_title,
+                                    hardcover_book_id=hc_book_id,
+                                    user_book_id=user_book_id,
+                                    field="progress_percent",
+                                    old_value=f"{hc_normalized}%"
+                                    if hc_normalized is not None
+                                    else "(empty)",
+                                    new_value=f"{calibre_normalized}%",
+                                    api_value=target_pages,
+                                    edition_id=edition_id,
+                                )
+                            )
+                            book_has_changes = True
 
         # Compare date started
         if date_started_col:

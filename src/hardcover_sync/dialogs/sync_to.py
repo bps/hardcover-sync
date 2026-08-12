@@ -6,6 +6,7 @@ This dialog syncs data from Calibre to Hardcover for selected books.
 
 from __future__ import annotations
 
+from html import escape
 from typing import Any
 
 # Qt imports - only available in Calibre's runtime environment
@@ -27,13 +28,13 @@ from qt.core import (
 from ..api import HardcoverAPI
 from ..config import (
     SYNCABLE_COLUMNS,
-    STATUS_IDS,
     get_unmapped_columns,
 )
 from ..models import UserBook
 from ..sync import (
     SyncToChange,
     SyncToResult,
+    build_sync_to_payloads,
     find_sync_to_changes,
 )
 from .base import HardcoverDialogBase
@@ -214,7 +215,15 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
             )
         elif not self.changes:
             unmapped = get_unmapped_columns(self.prefs)
-            if len(unmapped) == len(SYNCABLE_COLUMNS):  # All unmapped
+            if result.warnings:
+                warning_text = "<br>".join(escape(warning) for warning in result.warnings[:3])
+                if len(result.warnings) > 3:
+                    warning_text += f"<br>...and {len(result.warnings) - 3} more"
+                self.status_label.setText(
+                    f"Analyzed {result.linked_count} linked book(s), but some values were skipped."
+                    f"<br><b>Warnings:</b><br>{warning_text}"
+                )
+            elif len(unmapped) == len(SYNCABLE_COLUMNS):  # All unmapped
                 self.status_label.setText(
                     f"Analyzed {result.linked_count} linked book(s). "
                     "<b>No columns are mapped!</b> "
@@ -233,7 +242,13 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
                 parts.append(f"{result.not_linked_count} skipped (not linked)")
             if result.api_errors > 0:
                 parts.append(f"{result.api_errors} API error(s)")
-            self.status_label.setText(". ".join(parts) + ".")
+            status_text = ". ".join(parts) + "."
+            if result.warnings:
+                warning_text = "<br>".join(escape(warning) for warning in result.warnings[:3])
+                if len(result.warnings) > 3:
+                    warning_text += f"<br>...and {len(result.warnings) - 3} more"
+                status_text += f"<br><b>Warnings:</b><br>{warning_text}"
+            self.status_label.setText(status_text)
 
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(len(self.changes) > 0)
         self._update_summary()
@@ -406,39 +421,9 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
         # Separate user_book data from read data
         # User book: status, rating, review
         # Read: progress_pages, started_at, finished_at
-        user_book_data: dict = {}
-        read_data: dict = {}
-        status_mappings = self.prefs.get("status_mappings", {})
-        calibre_to_hc_status = {v: int(k) for k, v in status_mappings.items()}
-
-        for change in changes:
-            if change.field == "status" and change.new_value:
-                status_id = int(change.api_value) if change.api_value is not None else None
-                if status_id is None:
-                    status_id = calibre_to_hc_status.get(change.new_value)
-                if status_id is None:
-                    status_id = STATUS_IDS.get(change.new_value)
-                if status_id:
-                    user_book_data["status_id"] = status_id
-            elif change.field == "rating":
-                user_book_data["rating"] = (
-                    float(change.api_value) if change.api_value is not None else None
-                )
-            elif change.field == "progress":
-                read_data["progress_pages"] = (
-                    int(change.api_value) if change.api_value is not None else None
-                )
-            elif change.field == "progress_percent":
-                # api_value is already 0.0-1.0 decimal
-                read_data["progress"] = (
-                    float(change.api_value) if change.api_value is not None else None
-                )
-            elif change.field == "date_started":
-                read_data["started_at"] = change.api_value or change.new_value
-            elif change.field == "date_read":
-                read_data["finished_at"] = change.api_value or change.new_value
-            elif change.field == "review":
-                user_book_data["review"] = change.api_value or change.new_value
+        user_book_data, read_data = build_sync_to_payloads(
+            changes, self.prefs.get("status_mappings", {})
+        )
 
         if not user_book_data and not read_data:
             return False, "No valid update data"
