@@ -25,18 +25,13 @@ from qt.core import (
     Qt,
 )
 
-from ..api import HardcoverAPI
 from ..config import (
     SYNCABLE_COLUMNS,
     get_unmapped_columns,
 )
 from ..models import UserBook
-from ..sync import (
-    SyncToChange,
-    SyncToResult,
-    build_sync_to_payloads,
-    find_sync_to_changes,
-)
+from ..services import OperationGuard, apply_sync_to_book
+from ..sync import SyncToChange, SyncToResult, find_sync_to_changes
 from .base import HardcoverDialogBase
 
 
@@ -59,6 +54,7 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
         super().__init__(parent, plugin_action, book_ids)
         self.changes: list[SyncToChange] = []
         self.hardcover_data: dict[int, UserBook] = {}  # hardcover_book_id -> UserBook
+        self._operation_guard = OperationGuard()
 
         self.setWindowTitle("Sync to Hardcover")
         self.setMinimumWidth(800)
@@ -208,14 +204,29 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
         self._populate_changes_table()
 
         # Build detailed status message
-        if result.linked_count == 0:
+        api_error_text = "<br>".join(escape(message) for message in result.api_error_messages[:3])
+        if len(result.api_error_messages) > 3:
+            api_error_text += f"<br>...and {len(result.api_error_messages) - 3} more"
+
+        if result.api_errors and result.linked_count == 0:
+            self.status_label.setText(
+                "Could not analyze the selected Hardcover book(s)."
+                f"<br><b>Errors:</b><br>{api_error_text}"
+            )
+        elif result.linked_count == 0:
             self.status_label.setText(
                 "No selected books are linked to Hardcover. "
                 "Use 'Link to Hardcover...' to connect books first."
             )
         elif not self.changes:
             unmapped = get_unmapped_columns(self.prefs)
-            if result.warnings:
+            if result.api_errors:
+                self.status_label.setText(
+                    f"Analyzed {result.linked_count} linked book(s); "
+                    f"{result.api_errors} book(s) could not be analyzed."
+                    f"<br><b>Errors:</b><br>{api_error_text}"
+                )
+            elif result.warnings:
                 warning_text = "<br>".join(escape(warning) for warning in result.warnings[:3])
                 if len(result.warnings) > 3:
                     warning_text += f"<br>...and {len(result.warnings) - 3} more"
@@ -243,6 +254,8 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
             if result.api_errors > 0:
                 parts.append(f"{result.api_errors} API error(s)")
             status_text = ". ".join(parts) + "."
+            if result.api_errors:
+                status_text += f"<br><b>Errors:</b><br>{api_error_text}"
             if result.warnings:
                 warning_text = "<br>".join(escape(warning) for warning in result.warnings[:3])
                 if len(result.warnings) > 3:
@@ -304,6 +317,17 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
 
     def _on_apply(self) -> None:
         """Apply the selected changes to Hardcover."""
+        if not self._operation_guard.start():
+            return
+        try:
+            self._apply_selected_changes()
+        finally:
+            self._operation_guard.finish()
+            self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
+            self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setEnabled(True)
+
+    def _apply_selected_changes(self) -> None:
+        """Run the selected sync after the operation guard is acquired."""
         changes_to_apply = [c for c in self.changes if c.apply]
         if not changes_to_apply:
             self.reject()
@@ -337,16 +361,19 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
         for (hc_book_id, user_book_id), book_changes in changes_by_book.items():
             book_title = book_changes[0].calibre_title if book_changes else "Unknown"
             try:
-                success, error_msg = self._apply_book_changes(
-                    api, hc_book_id, user_book_id, book_changes
+                outcome = apply_sync_to_book(
+                    api=api,
+                    hardcover_book_id=hc_book_id,
+                    user_book_id=user_book_id,
+                    changes=book_changes,
+                    status_mappings=self.prefs.get("status_mappings", {}),
+                    current_user_book=self.hardcover_data.get(hc_book_id),
                 )
-                if success:
-                    applied += len(book_changes)
-                else:
-                    skipped += len(book_changes)
-                    if error_msg:
-                        errors.append(f"{book_title}: {error_msg}")
+                applied += outcome.applied
+                skipped += outcome.failed
+                errors.extend(f"{book_title}: {error}" for error in outcome.errors)
             except Exception as e:
+                skipped += len(book_changes)
                 errors.append(f"{book_title}: {e}")
 
             i += len(book_changes)
@@ -404,60 +431,3 @@ class SyncToHardcoverDialog(HardcoverDialogBase):
             )
 
         self.accept()
-
-    def _apply_book_changes(
-        self,
-        api: HardcoverAPI,
-        hc_book_id: int,
-        user_book_id: int | None,
-        changes: list[SyncToChange],
-    ) -> tuple[bool, str | None]:
-        """
-        Apply all changes for a single book.
-
-        Returns:
-            Tuple of (success, error_message).
-        """
-        # Separate user_book data from read data
-        # User book: status, rating, review
-        # Read: progress_pages, started_at, finished_at
-        user_book_data, read_data = build_sync_to_payloads(
-            changes, self.prefs.get("status_mappings", {})
-        )
-
-        if not user_book_data and not read_data:
-            return False, "No valid update data"
-
-        try:
-            created_user_book = None
-
-            # Either update existing or add new user_book
-            if user_book_id:
-                # Update existing user_book with non-read data
-                if user_book_data:
-                    api.update_user_book(user_book_id, **user_book_data)
-            else:
-                # Need to add book to library first
-                status_id = user_book_data.pop("status_id", 1)  # Default to "Want to Read"
-                created_user_book = api.add_book_to_library(
-                    book_id=hc_book_id,
-                    status_id=status_id,
-                    **user_book_data,
-                )
-                user_book_id = created_user_book.id
-
-            # Handle read data (progress, dates) via user_book_reads API
-            if read_data and user_book_id:
-                # Get the existing user book to check for latest read
-                hc_user_book = self.hardcover_data.get(hc_book_id)
-                if hc_user_book and hc_user_book.latest_read:
-                    # Update existing read
-                    api.update_user_book_read(hc_user_book.latest_read.id, **read_data)
-                else:
-                    # Create new read
-                    api.insert_user_book_read(user_book_id, **read_data)
-
-            return True, None
-
-        except Exception as e:
-            return False, str(e)
