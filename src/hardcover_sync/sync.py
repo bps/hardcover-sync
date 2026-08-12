@@ -7,10 +7,12 @@ Hardcover and Calibre, extracted from the dialog classes for testability.
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from html import unescape
+from html.parser import HTMLParser
 from typing import Any
 
 from .models import Book, Edition, UserBook
-from .config import READING_STATUSES, STATUS_IDS, get_column_mappings
+from .config import READING_STATUSES, get_column_mappings, get_status_mapping_conflicts
 
 
 # Display names for sync field types
@@ -24,6 +26,37 @@ FIELD_DISPLAY_NAMES = {
     "is_read": "Is Read",
     "review": "Review",
 }
+
+
+class _ReviewHTMLParser(HTMLParser):
+    """Convert the small HTML subset used by Calibre comments to plain text."""
+
+    _BLOCK_TAGS = {"br", "div", "li", "p"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._BLOCK_TAGS and self.parts:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def normalize_review_text(text: str | None) -> str:
+    """Normalize Calibre HTML comments and Hardcover text for comparison/writes."""
+    if not text:
+        return ""
+    parser = _ReviewHTMLParser()
+    parser.feed(text)
+    lines = [line.strip() for line in unescape("".join(parser.parts)).splitlines()]
+    return "\n".join(line for line in lines if line)
 
 
 def truncate_for_display(text: str | None, *, max_length: int = 50, empty: str = "(empty)") -> str:
@@ -91,16 +124,13 @@ def build_sync_to_payloads(
     """Build Hardcover user-book and read payloads from selected changes."""
     user_book_data: dict[str, Any] = {}
     read_data: dict[str, Any] = {}
-    calibre_to_hc_status = {value: int(key) for key, value in status_mappings.items()}
     has_page_progress = any(change.field == "progress" for change in changes)
 
     for change in changes:
         if change.field == "status" and change.new_value:
             status_id = int(change.api_value) if change.api_value is not None else None
             if status_id is None:
-                status_id = calibre_to_hc_status.get(change.new_value)
-            if status_id is None:
-                status_id = STATUS_IDS.get(change.new_value)
+                status_id = get_status_from_calibre(change.new_value, status_mappings)
             if status_id:
                 user_book_data["status_id"] = status_id
         elif change.field == "rating":
@@ -346,25 +376,17 @@ def _progress_edition_id(identifiers: dict[str, str], user_book: UserBook | None
 
 
 def get_status_from_calibre(calibre_status: str, status_mappings: dict) -> int | None:
+    """Get the unambiguous Hardcover status ID for a Calibre value.
+
+    Blank mappings use Hardcover's default status names. If configured and
+    default values collide, the value is ambiguous and is not synchronized.
     """
-    Get the Hardcover status ID for a Calibre status value.
-
-    Args:
-        calibre_status: Calibre status string.
-        status_mappings: User-configured status mappings (str(id) -> calibre_value).
-
-    Returns:
-        Hardcover status ID (1-6), or None if not mapped.
-    """
-    # Build reverse mapping
-    calibre_to_hc = {v: int(k) for k, v in status_mappings.items()}
-
-    # Check user-configured mapping first
-    if calibre_status in calibre_to_hc:
-        return calibre_to_hc[calibre_status]
-
-    # Fall back to default status names
-    return STATUS_IDS.get(calibre_status)
+    matches = [
+        status_id
+        for status_id, default_name in READING_STATUSES.items()
+        if (status_mappings.get(str(status_id)) or default_name) == calibre_status
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def extract_date(date_str: str | None) -> str | None:
@@ -391,6 +413,232 @@ def extract_date(date_str: str | None) -> str | None:
     return date_str
 
 
+@dataclass
+class _SyncFromContext:
+    user_book: UserBook
+    calibre_id: int
+    calibre_title: str
+    columns: dict[str, str]
+    prefs: dict
+    get_value: Callable[[int, str], Any]
+    get_metadata: Callable[[str], dict | None] | None
+
+    def change(
+        self,
+        field: str,
+        old_value: str | None,
+        new_value: str | None,
+        *,
+        raw_value: str | None = None,
+    ) -> SyncChange:
+        return SyncChange(
+            calibre_id=self.calibre_id,
+            calibre_title=self.calibre_title,
+            hardcover_book_id=self.user_book.book_id,
+            field=field,
+            old_value=old_value,
+            new_value=new_value,
+            raw_value=raw_value,
+        )
+
+
+def _compare_sync_from_status(context: _SyncFromContext) -> list[SyncChange]:
+    column = context.columns.get("status")
+    status_id = context.user_book.status_id
+    included_statuses = context.prefs.get("sync_statuses", [])
+    if not column or not status_id or (included_statuses and status_id not in included_statuses):
+        return []
+    new_value = get_status_from_hardcover(status_id, context.prefs.get("status_mappings", {}))
+    current = context.get_value(context.calibre_id, column)
+    if not new_value or current == new_value:
+        return []
+    return [context.change("status", current or "(empty)", new_value)]
+
+
+def _compare_sync_from_rating(context: _SyncFromContext) -> list[SyncChange]:
+    column = context.columns.get("rating")
+    rating = context.user_book.rating
+    if not context.prefs.get("sync_rating", True) or not column or rating is None:
+        return []
+    current = context.get_value(context.calibre_id, column)
+    metadata = context.get_metadata(column) if context.get_metadata else None
+    new_rating, _ = convert_rating_to_calibre(rating, column, metadata)
+    if str(current) == new_rating:
+        return []
+    current_stars = convert_rating_from_calibre(current, column, metadata)
+    return [
+        context.change(
+            "rating",
+            format_rating_as_stars(current_stars),
+            format_rating_as_stars(rating),
+            raw_value=new_rating,
+        )
+    ]
+
+
+def _compare_sync_from_progress(context: _SyncFromContext) -> list[SyncChange]:
+    if not context.prefs.get("sync_progress", True):
+        return []
+    changes = []
+    pages_column = context.columns.get("progress")
+    pages = context.user_book.current_progress_pages
+    if pages_column and pages is not None:
+        current = context.get_value(context.calibre_id, pages_column)
+        new_value = str(pages)
+        if str(current) != new_value:
+            changes.append(
+                context.change(
+                    "progress",
+                    str(current) if current else "(empty)",
+                    new_value,
+                )
+            )
+
+    percent_column = context.columns.get("progress_percent")
+    percent = context.user_book.current_progress_percent
+    if percent_column and percent is not None:
+        current = context.get_value(context.calibre_id, percent_column)
+        metadata = context.get_metadata(percent_column) if context.get_metadata else None
+        datatype = metadata.get("datatype") if metadata else None
+        new_percent = normalize_progress_percent(percent, datatype)
+        try:
+            current_percent = normalize_progress_percent(current, datatype)
+        except (TypeError, ValueError):
+            current_percent = None
+        if current_percent != new_percent:
+            changes.append(
+                context.change(
+                    "progress_percent",
+                    f"{current_percent}%" if current_percent is not None else "(empty)",
+                    f"{new_percent}%",
+                    raw_value=str(new_percent),
+                )
+            )
+    return changes
+
+
+def _compare_sync_from_dates(context: _SyncFromContext) -> list[SyncChange]:
+    if not context.prefs.get("sync_dates", True):
+        return []
+    changes = []
+    date_fields = (
+        ("date_started", context.user_book.latest_started_at),
+        ("date_read", context.user_book.latest_finished_at),
+    )
+    for field_name, hardcover_date in date_fields:
+        column = context.columns.get(field_name)
+        new_date = extract_date(hardcover_date)
+        if not column or not new_date:
+            continue
+        current = context.get_value(context.calibre_id, column)
+        current_date = extract_date(str(current)) if current else None
+        if current_date != new_date:
+            changes.append(context.change(field_name, current_date or "(empty)", new_date))
+    return changes
+
+
+def _compare_sync_from_is_read(context: _SyncFromContext) -> list[SyncChange]:
+    column = context.columns.get("is_read")
+    status_id = context.user_book.status_id
+    included_statuses = context.prefs.get("sync_statuses", [])
+    if not column or not status_id or (included_statuses and status_id not in included_statuses):
+        return []
+    new_value = status_id == 3
+    current = context.get_value(context.calibre_id, column)
+    current_value = bool(current) if current is not None else False
+    if current_value == new_value:
+        return []
+    return [
+        context.change(
+            "is_read",
+            "Yes" if current_value else "No",
+            "Yes" if new_value else "No",
+            raw_value="Yes" if new_value else "",
+        )
+    ]
+
+
+def _compare_sync_from_review(context: _SyncFromContext) -> list[SyncChange]:
+    column = context.columns.get("review")
+    review = context.user_book.review
+    if not context.prefs.get("sync_review", True) or not column or not review:
+        return []
+    current = context.get_value(context.calibre_id, column)
+    if normalize_review_text(current) == normalize_review_text(review):
+        return []
+    return [
+        context.change(
+            "review",
+            truncate_for_display(current),
+            truncate_for_display(review),
+        )
+    ]
+
+
+def build_sync_from_values(
+    user_book: UserBook,
+    prefs: dict,
+    get_column_metadata: Callable[[str], dict | None] | None = None,
+) -> list[tuple[str, Any]]:
+    """Build Calibre column writes for a newly imported Hardcover book."""
+    columns = get_column_mappings(prefs)
+    values: list[tuple[str, Any]] = []
+    included_statuses = prefs.get("sync_statuses", [])
+    status_enabled = not included_statuses or user_book.status_id in included_statuses
+
+    status_column = columns.get("status")
+    if status_column and user_book.status_id and status_enabled:
+        status_value = get_status_from_hardcover(
+            user_book.status_id, prefs.get("status_mappings", {})
+        )
+        if status_value:
+            values.append((status_column, status_value))
+
+    rating_column = columns.get("rating")
+    if prefs.get("sync_rating", True) and rating_column and user_book.rating is not None:
+        metadata = get_column_metadata(rating_column) if get_column_metadata else None
+        rating_value, _ = convert_rating_to_calibre(user_book.rating, rating_column, metadata)
+        values.append((rating_column, rating_value))
+
+    if prefs.get("sync_progress", True):
+        pages_column = columns.get("progress")
+        if pages_column and user_book.current_progress_pages is not None:
+            values.append((pages_column, user_book.current_progress_pages))
+        percent_column = columns.get("progress_percent")
+        if percent_column and user_book.current_progress_percent is not None:
+            values.append((percent_column, round(user_book.current_progress_percent, 1)))
+
+    if prefs.get("sync_dates", True):
+        for field_name, date_value in (
+            ("date_started", user_book.latest_started_at),
+            ("date_read", user_book.latest_finished_at),
+        ):
+            column = columns.get(field_name)
+            normalized_date = extract_date(date_value)
+            if column and normalized_date:
+                values.append((column, normalized_date))
+
+    is_read_column = columns.get("is_read")
+    if is_read_column and user_book.status_id and status_enabled:
+        values.append((is_read_column, user_book.status_id == 3))
+
+    review_column = columns.get("review")
+    if prefs.get("sync_review", True) and review_column and user_book.review:
+        values.append((review_column, user_book.review))
+
+    return values
+
+
+_SYNC_FROM_COMPARATORS = (
+    _compare_sync_from_status,
+    _compare_sync_from_rating,
+    _compare_sync_from_progress,
+    _compare_sync_from_dates,
+    _compare_sync_from_is_read,
+    _compare_sync_from_review,
+)
+
+
 def find_sync_from_changes(
     hardcover_books: list[UserBook],
     hc_to_calibre: dict[str, int],
@@ -399,203 +647,25 @@ def find_sync_from_changes(
     prefs: dict,
     get_column_metadata: Callable[[str], dict | None] | None = None,
 ) -> list[SyncChange]:
-    """
-    Find all changes to sync from Hardcover to Calibre.
-
-    Args:
-        hardcover_books: List of UserBook objects from Hardcover.
-        hc_to_calibre: Mapping of Hardcover book slug -> Calibre book ID.
-        get_calibre_value: Function(calibre_id, column) -> value.
-        get_calibre_title: Function(calibre_id) -> title string.
-        prefs: Plugin preferences dict.
-        get_column_metadata: Optional function(column) -> metadata dict.
-
-    Returns:
-        List of SyncChange objects representing needed updates.
-    """
+    """Find changes needed to make linked Calibre books match Hardcover."""
     changes = []
-
-    # Get column mappings
-    col = get_column_mappings(prefs)
-    status_col = col.get("status", "")
-    rating_col = col.get("rating", "")
-    progress_col = col.get("progress", "")
-    progress_percent_col = col.get("progress_percent", "")
-    date_started_col = col.get("date_started", "")
-    date_read_col = col.get("date_read", "")
-    is_read_col = col.get("is_read", "")
-    review_col = col.get("review", "")
-
-    # Get sync options
-    sync_rating = prefs.get("sync_rating", True)
-    sync_progress = prefs.get("sync_progress", True)
-    sync_dates = prefs.get("sync_dates", True)
-    sync_review = prefs.get("sync_review", True)
-
-    # Get status mappings
-    status_mappings = prefs.get("status_mappings", {})
-
-    for hc_book in hardcover_books:
-        hc_slug = hc_book.book.slug if hc_book.book else None
-        calibre_id = hc_to_calibre.get(hc_slug) if hc_slug else None
+    columns = get_column_mappings(prefs)
+    for user_book in hardcover_books:
+        slug = user_book.book.slug if user_book.book else None
+        calibre_id = hc_to_calibre.get(slug) if slug else None
         if not calibre_id:
             continue
-
-        calibre_title = get_calibre_title(calibre_id)
-
-        # Check status
-        if status_col and hc_book.status_id:
-            hc_status_value = get_status_from_hardcover(hc_book.status_id, status_mappings)
-            if hc_status_value:
-                current = get_calibre_value(calibre_id, status_col)
-                if current != hc_status_value:
-                    changes.append(
-                        SyncChange(
-                            calibre_id=calibre_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book.book_id,
-                            field="status",
-                            old_value=current or "(empty)",
-                            new_value=hc_status_value,
-                        )
-                    )
-
-        # Check rating
-        if sync_rating and rating_col and hc_book.rating is not None:
-            current = get_calibre_value(calibre_id, rating_col)
-            col_meta = get_column_metadata(rating_col) if get_column_metadata else None
-            new_rating, _ = convert_rating_to_calibre(hc_book.rating, rating_col, col_meta)
-            current_for_stars = convert_rating_from_calibre(current, rating_col, col_meta)
-
-            if str(current) != new_rating:
-                changes.append(
-                    SyncChange(
-                        calibre_id=calibre_id,
-                        calibre_title=calibre_title,
-                        hardcover_book_id=hc_book.book_id,
-                        field="rating",
-                        old_value=format_rating_as_stars(current_for_stars),
-                        new_value=format_rating_as_stars(hc_book.rating),
-                        raw_value=new_rating,
-                    )
-                )
-
-        # Check progress
-        current_progress = hc_book.current_progress_pages
-        if sync_progress and progress_col and current_progress is not None:
-            current = get_calibre_value(calibre_id, progress_col)
-            new_progress = str(current_progress)
-            if str(current) != new_progress:
-                changes.append(
-                    SyncChange(
-                        calibre_id=calibre_id,
-                        calibre_title=calibre_title,
-                        hardcover_book_id=hc_book.book_id,
-                        field="progress",
-                        old_value=str(current) if current else "(empty)",
-                        new_value=new_progress,
-                    )
-                )
-
-        # Check progress percent
-        current_progress_pct = hc_book.current_progress_percent
-        if sync_progress and progress_percent_col and current_progress_pct is not None:
-            current = get_calibre_value(calibre_id, progress_percent_col)
-            col_meta = get_column_metadata(progress_percent_col) if get_column_metadata else None
-            datatype = col_meta.get("datatype") if col_meta else None
-            new_progress_pct = normalize_progress_percent(current_progress_pct, datatype)
-            try:
-                current_normalized = normalize_progress_percent(current, datatype)
-            except (TypeError, ValueError):
-                current_normalized = None
-            if current_normalized != new_progress_pct:
-                changes.append(
-                    SyncChange(
-                        calibre_id=calibre_id,
-                        calibre_title=calibre_title,
-                        hardcover_book_id=hc_book.book_id,
-                        field="progress_percent",
-                        old_value=f"{current_normalized}%"
-                        if current_normalized is not None
-                        else "(empty)",
-                        new_value=f"{new_progress_pct}%",
-                        raw_value=str(new_progress_pct),
-                    )
-                )
-
-        # Check dates (use latest_* properties to get dates from reads list)
-        if sync_dates:
-            started_at = hc_book.latest_started_at
-            finished_at = hc_book.latest_finished_at
-
-            if date_started_col and started_at:
-                new_date = extract_date(started_at)
-                if new_date:
-                    current = get_calibre_value(calibre_id, date_started_col)
-                    current_date = extract_date(str(current)) if current else None
-                    if current_date != new_date:
-                        changes.append(
-                            SyncChange(
-                                calibre_id=calibre_id,
-                                calibre_title=calibre_title,
-                                hardcover_book_id=hc_book.book_id,
-                                field="date_started",
-                                old_value=current_date or "(empty)",
-                                new_value=new_date,
-                            )
-                        )
-
-            if date_read_col and finished_at:
-                new_date = extract_date(finished_at)
-                if new_date:
-                    current = get_calibre_value(calibre_id, date_read_col)
-                    current_date = extract_date(str(current)) if current else None
-                    if current_date != new_date:
-                        changes.append(
-                            SyncChange(
-                                calibre_id=calibre_id,
-                                calibre_title=calibre_title,
-                                hardcover_book_id=hc_book.book_id,
-                                field="date_read",
-                                old_value=current_date or "(empty)",
-                                new_value=new_date,
-                            )
-                        )
-
-        # Check is_read boolean (Yes when status is "Read", i.e. status_id == 3)
-        if is_read_col:
-            is_read = hc_book.status_id == 3
-            current = get_calibre_value(calibre_id, is_read_col)
-            # Normalize current value to boolean for comparison
-            current_bool = bool(current) if current is not None else False
-            if current_bool != is_read:
-                changes.append(
-                    SyncChange(
-                        calibre_id=calibre_id,
-                        calibre_title=calibre_title,
-                        hardcover_book_id=hc_book.book_id,
-                        field="is_read",
-                        old_value="Yes" if current_bool else "No",
-                        new_value="Yes" if is_read else "No",
-                        raw_value="Yes" if is_read else "",
-                    )
-                )
-
-        # Check review
-        if sync_review and review_col and hc_book.review:
-            current = get_calibre_value(calibre_id, review_col)
-            if current != hc_book.review:
-                changes.append(
-                    SyncChange(
-                        calibre_id=calibre_id,
-                        calibre_title=calibre_title,
-                        hardcover_book_id=hc_book.book_id,
-                        field="review",
-                        old_value=truncate_for_display(current),
-                        new_value=truncate_for_display(hc_book.review),
-                    )
-                )
-
+        context = _SyncFromContext(
+            user_book=user_book,
+            calibre_id=calibre_id,
+            calibre_title=get_calibre_title(calibre_id),
+            columns=columns,
+            prefs=prefs,
+            get_value=get_calibre_value,
+            get_metadata=get_column_metadata,
+        )
+        for compare in _SYNC_FROM_COMPARATORS:
+            changes.extend(compare(context))
     return changes
 
 
@@ -617,8 +687,240 @@ class SyncToResult:
     linked_count: int = 0
     not_linked_count: int = 0
     api_errors: int = 0
+    api_error_messages: list[str] = field(default_factory=list)
     books_with_changes: int = 0
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _SyncToContext:
+    calibre_id: int
+    calibre_title: str
+    hardcover_book: Book
+    user_book: UserBook | None
+    identifiers: dict[str, str]
+    columns: dict[str, str]
+    prefs: dict
+    get_value: Callable[[int, str], Any]
+    get_metadata: Callable[[str], dict | None] | None
+    warnings: list[str]
+
+    @property
+    def user_book_id(self) -> int | None:
+        return self.user_book.id if self.user_book else None
+
+    def change(
+        self,
+        field: str,
+        old_value: str | None,
+        new_value: str | None,
+        *,
+        api_value: Any = None,
+        edition_id: int | None = None,
+    ) -> SyncToChange:
+        return SyncToChange(
+            calibre_id=self.calibre_id,
+            calibre_title=self.calibre_title,
+            hardcover_book_id=self.hardcover_book.id,
+            user_book_id=self.user_book_id,
+            field=field,
+            old_value=old_value,
+            new_value=new_value,
+            api_value=api_value,
+            edition_id=edition_id,
+        )
+
+
+def _compare_sync_to_status(context: _SyncToContext) -> list[SyncToChange]:
+    column = context.columns.get("status")
+    if not column:
+        return []
+    calibre_status = context.get_value(context.calibre_id, column)
+    if not calibre_status:
+        return []
+    mappings = context.prefs.get("status_mappings", {})
+    new_status_id = get_status_from_calibre(calibre_status, mappings)
+    included_statuses = context.prefs.get("sync_statuses", [])
+    if not new_status_id:
+        if calibre_status in get_status_mapping_conflicts(mappings):
+            context.warnings.append(
+                f"{context.calibre_title}: skipped ambiguous status value {calibre_status!r}"
+            )
+        return []
+    if included_statuses and new_status_id not in included_statuses:
+        return []
+    current_status_id = context.user_book.status_id if context.user_book else None
+    if current_status_id == new_status_id:
+        return []
+    current_status = (
+        get_status_from_hardcover(current_status_id, mappings) if current_status_id else None
+    )
+    return [
+        context.change(
+            "status",
+            current_status or "(not in library)",
+            calibre_status,
+            api_value=new_status_id,
+        )
+    ]
+
+
+def _compare_sync_to_rating(context: _SyncToContext) -> list[SyncToChange]:
+    column = context.columns.get("rating")
+    if not context.prefs.get("sync_rating", True) or not column:
+        return []
+    calibre_rating = context.get_value(context.calibre_id, column)
+    if calibre_rating is None:
+        return []
+    metadata = context.get_metadata(column) if context.get_metadata else None
+    new_rating = convert_rating_from_calibre(calibre_rating, column, metadata)
+    if new_rating is None:
+        context.warnings.append(
+            f"{context.calibre_title}: skipped rating because it is not numeric"
+        )
+        return []
+    current_rating = context.user_book.rating if context.user_book else None
+    if new_rating == current_rating:
+        return []
+    return [
+        context.change(
+            "rating",
+            format_rating_as_stars(current_rating),
+            format_rating_as_stars(new_rating),
+            api_value=new_rating,
+        )
+    ]
+
+
+def _compare_sync_to_progress(context: _SyncToContext) -> list[SyncToChange]:
+    if not context.prefs.get("sync_progress", True):
+        return []
+    pages_column = context.columns.get("progress")
+    calibre_pages = context.get_value(context.calibre_id, pages_column) if pages_column else None
+    if calibre_pages is not None:
+        current_pages = context.user_book.current_progress_pages if context.user_book else None
+        if calibre_pages == current_pages:
+            return []
+        return [
+            context.change(
+                "progress",
+                str(current_pages) if current_pages is not None else "(empty)",
+                str(calibre_pages),
+                api_value=calibre_pages,
+                edition_id=_progress_edition_id(context.identifiers, context.user_book),
+            )
+        ]
+
+    percent_column = context.columns.get("progress_percent")
+    if not percent_column:
+        return []
+    calibre_percent = context.get_value(context.calibre_id, percent_column)
+    if calibre_percent is None or calibre_percent == "":
+        return []
+    metadata = context.get_metadata(percent_column) if context.get_metadata else None
+    datatype = metadata.get("datatype") if metadata else None
+    try:
+        normalized_percent = normalize_progress_percent(calibre_percent, datatype)
+    except (TypeError, ValueError):
+        normalized_percent = None
+    if normalized_percent is None:
+        context.warnings.append(
+            f"{context.calibre_title}: skipped percentage progress because it is not numeric"
+        )
+        return []
+    if not 0 <= float(normalized_percent) <= 100:
+        context.warnings.append(
+            f"{context.calibre_title}: skipped percentage progress outside the 0-100 range"
+        )
+        return []
+
+    edition_id, page_count, warning = _progress_basis(
+        context.identifiers, context.hardcover_book, context.user_book
+    )
+    if page_count is None:
+        context.warnings.append(
+            f"{context.calibre_title}: skipped percentage progress because {warning}"
+        )
+        return []
+    current_percent = context.user_book.current_progress_percent if context.user_book else None
+    current_pages = context.user_book.current_progress_pages if context.user_book else None
+    if current_pages is not None:
+        current_percent = current_pages / page_count * 100
+    normalized_current = normalize_progress_percent(current_percent, datatype)
+    target_pages = round(page_count * float(normalized_percent) / 100)
+    if normalized_percent == normalized_current or target_pages == current_pages:
+        return []
+    return [
+        context.change(
+            "progress_percent",
+            f"{normalized_current}%" if normalized_current is not None else "(empty)",
+            f"{normalized_percent}%",
+            api_value=target_pages,
+            edition_id=edition_id,
+        )
+    ]
+
+
+def _compare_sync_to_dates(context: _SyncToContext) -> list[SyncToChange]:
+    if not context.prefs.get("sync_dates", True):
+        return []
+    changes = []
+    date_fields = (
+        (
+            "date_started",
+            context.user_book.latest_started_at if context.user_book else None,
+        ),
+        (
+            "date_read",
+            context.user_book.latest_finished_at if context.user_book else None,
+        ),
+    )
+    for field_name, hardcover_date in date_fields:
+        column = context.columns.get(field_name)
+        calibre_date = context.get_value(context.calibre_id, column) if column else None
+        if not calibre_date:
+            continue
+        new_date = str(calibre_date)[:10]
+        current_date = hardcover_date[:10] if hardcover_date else None
+        if new_date != current_date:
+            changes.append(
+                context.change(
+                    field_name,
+                    current_date or "(empty)",
+                    new_date,
+                    api_value=new_date,
+                )
+            )
+    return changes
+
+
+def _compare_sync_to_review(context: _SyncToContext) -> list[SyncToChange]:
+    column = context.columns.get("review")
+    if not context.prefs.get("sync_review", True) or not column:
+        return []
+    review = normalize_review_text(context.get_value(context.calibre_id, column))
+    if not review:
+        return []
+    current_review = context.user_book.review if context.user_book else None
+    if review == normalize_review_text(current_review):
+        return []
+    return [
+        context.change(
+            "review",
+            truncate_for_display(current_review),
+            truncate_for_display(review),
+            api_value=review,
+        )
+    ]
+
+
+_SYNC_TO_COMPARATORS = (
+    _compare_sync_to_status,
+    _compare_sync_to_rating,
+    _compare_sync_to_progress,
+    _compare_sync_to_dates,
+    _compare_sync_to_review,
+)
 
 
 def find_sync_to_changes(
@@ -632,288 +934,66 @@ def find_sync_to_changes(
     get_column_metadata: Callable[[str], dict | None] | None = None,
     on_progress: Callable[[int], None] | None = None,
 ) -> SyncToResult:
-    """
-    Find all changes to sync from Calibre to Hardcover.
-
-    This is the sync-to counterpart of find_sync_from_changes(). It compares
-    Calibre column values against Hardcover data and produces SyncToChange
-    objects for each difference found.
-
-    Args:
-        book_ids: List of Calibre book IDs to analyze.
-        get_identifiers: Function(calibre_id) -> identifiers dict.
-        get_calibre_value: Function(calibre_id, column) -> value.
-        get_calibre_title: Function(calibre_id) -> title string.
-        resolve_book: Function(slug_or_id) -> Book | None.
-        get_user_book: Function(hardcover_book_id) -> UserBook | None.
-        prefs: Plugin preferences dict.
-        get_column_metadata: Optional function(column) -> metadata dict.
-        on_progress: Optional callback(index) called after each book is processed.
-
-    Returns:
-        SyncToResult with changes, hardcover_data, and statistics.
-    """
+    """Find changes needed to make Hardcover match linked Calibre books."""
     result = SyncToResult()
+    columns = get_column_mappings(prefs)
 
-    # Get column mappings
-    col = get_column_mappings(prefs)
-    status_col = col.get("status", "")
-    rating_col = col.get("rating", "")
-    progress_col = col.get("progress", "")
-    progress_percent_col = col.get("progress_percent", "")
-    date_started_col = col.get("date_started", "")
-    date_read_col = col.get("date_read", "")
-    review_col = col.get("review", "")
-
-    # Get status mappings (reverse: Calibre value -> Hardcover ID)
-    status_mappings = prefs.get("status_mappings", {})
-    calibre_to_hc_status = {v: int(k) for k, v in status_mappings.items()}
-
-    for i, book_id in enumerate(book_ids):
+    for index, book_id in enumerate(book_ids, start=1):
         if on_progress:
-            on_progress(i + 1)
-
-        # Check if book is linked to Hardcover
+            on_progress(index)
         identifiers = get_identifiers(book_id)
-        hc_id_str = identifiers.get("hardcover")
-        if not hc_id_str:
+        hardcover_identifier = identifiers.get("hardcover")
+        if not hardcover_identifier:
             result.not_linked_count += 1
             continue
 
-        hc_book = resolve_book(hc_id_str)
-        if not hc_book:
+        title = get_calibre_title(book_id)
+        try:
+            hardcover_book = resolve_book(hardcover_identifier)
+        except Exception as error:
+            result.api_errors += 1
+            result.api_error_messages.append(f"{title}: {error}")
+            continue
+        if not hardcover_book:
             result.not_linked_count += 1
             continue
-        hc_book_id = hc_book.id
+
+        try:
+            user_book = get_user_book(hardcover_book.id)
+        except Exception as error:
+            result.api_errors += 1
+            result.api_error_messages.append(f"{title}: {error}")
+            continue
 
         result.linked_count += 1
-        calibre_title = get_calibre_title(book_id)
-
-        # Fetch current Hardcover data for this book
-        hc_user_book: UserBook | None = None
-        try:
-            hc_user_book = get_user_book(hc_book_id)
-            if hc_user_book:
-                result.hardcover_data[hc_book_id] = hc_user_book
-        except Exception:  # noqa: S110
-            result.api_errors += 1
-
-        user_book_id = hc_user_book.id if hc_user_book else None
-
-        # Track if this book has any Calibre data to sync
-        book_has_changes = False
-
-        # Compare status
-        if status_col:
-            calibre_status = get_calibre_value(book_id, status_col)
-            if calibre_status:
-                hc_status_id = calibre_to_hc_status.get(calibre_status)
-                if hc_status_id is None:
-                    # Try direct match with status name
-                    hc_status_id = STATUS_IDS.get(calibre_status)
-
-                if hc_status_id:
-                    hc_current_status_id = hc_user_book.status_id if hc_user_book else None
-                    if hc_current_status_id != hc_status_id:
-                        hc_current_status = (
-                            get_status_from_hardcover(hc_current_status_id, status_mappings)
-                            if hc_current_status_id
-                            else None
-                        )
-                        result.changes.append(
-                            SyncToChange(
-                                calibre_id=book_id,
-                                calibre_title=calibre_title,
-                                hardcover_book_id=hc_book_id,
-                                user_book_id=user_book_id,
-                                field="status",
-                                old_value=hc_current_status or "(not in library)",
-                                new_value=calibre_status,
-                                api_value=hc_status_id,
-                            )
-                        )
-                        book_has_changes = True
-
-        # Compare rating
-        if rating_col:
-            calibre_rating = get_calibre_value(book_id, rating_col)
-            if calibre_rating is not None:
-                # Convert Calibre rating to Hardcover scale (0-5)
-                col_info = get_column_metadata(rating_col) if get_column_metadata else None
-                hc_new_rating = convert_rating_from_calibre(calibre_rating, rating_col, col_info)
-
-                hc_current_rating = hc_user_book.rating if hc_user_book else None
-                if hc_new_rating != hc_current_rating:
-                    result.changes.append(
-                        SyncToChange(
-                            calibre_id=book_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book_id,
-                            user_book_id=user_book_id,
-                            field="rating",
-                            old_value=format_rating_as_stars(hc_current_rating),
-                            new_value=format_rating_as_stars(hc_new_rating),
-                            api_value=hc_new_rating,
-                        )
-                    )
-                    book_has_changes = True
-
-        # Compare progress (pages). When both progress columns have values, pages win.
-        calibre_progress = get_calibre_value(book_id, progress_col) if progress_col else None
-        if calibre_progress is not None:
-            hc_current_progress = hc_user_book.current_progress_pages if hc_user_book else None
-            if calibre_progress != hc_current_progress:
-                result.changes.append(
-                    SyncToChange(
-                        calibre_id=book_id,
-                        calibre_title=calibre_title,
-                        hardcover_book_id=hc_book_id,
-                        user_book_id=user_book_id,
-                        field="progress",
-                        old_value=str(hc_current_progress)
-                        if hc_current_progress is not None
-                        else "(empty)",
-                        new_value=str(calibre_progress),
-                        api_value=calibre_progress,
-                        edition_id=_progress_edition_id(identifiers, hc_user_book),
-                    )
-                )
-                book_has_changes = True
-
-        # Hardcover accepts page progress as input. Convert a percentage using the
-        # edition that Hardcover will associate with the read.
-        if progress_percent_col and calibre_progress is None:
-            calibre_progress_pct = get_calibre_value(book_id, progress_percent_col)
-            if calibre_progress_pct is not None and calibre_progress_pct != "":
-                col_meta = (
-                    get_column_metadata(progress_percent_col) if get_column_metadata else None
-                )
-                datatype = col_meta.get("datatype") if col_meta else None
-                try:
-                    calibre_normalized = normalize_progress_percent(calibre_progress_pct, datatype)
-                except (TypeError, ValueError):
-                    calibre_normalized = None
-
-                if calibre_normalized is None:
-                    result.warnings.append(
-                        f"{calibre_title}: skipped percentage progress because it is not numeric"
-                    )
-                elif not 0 <= float(calibre_normalized) <= 100:
-                    result.warnings.append(
-                        f"{calibre_title}: skipped percentage progress outside the 0-100 range"
-                    )
-                else:
-                    edition_id, page_count, warning = _progress_basis(
-                        identifiers, hc_book, hc_user_book
-                    )
-                    if page_count is None:
-                        result.warnings.append(
-                            f"{calibre_title}: skipped percentage progress because {warning}"
-                        )
-                    else:
-                        hc_current_pct = (
-                            hc_user_book.current_progress_percent if hc_user_book else None
-                        )
-                        hc_current_pages = (
-                            hc_user_book.current_progress_pages if hc_user_book else None
-                        )
-                        if hc_current_pages is not None:
-                            # Compare using the same denominator as the pending write.
-                            hc_current_pct = hc_current_pages / page_count * 100
-                        hc_normalized = normalize_progress_percent(hc_current_pct, datatype)
-                        target_pages = round(page_count * float(calibre_normalized) / 100)
-
-                        # Compare at the Calibre column's precision first so a
-                        # percent->pages round trip does not continually resync.
-                        if calibre_normalized != hc_normalized and target_pages != hc_current_pages:
-                            result.changes.append(
-                                SyncToChange(
-                                    calibre_id=book_id,
-                                    calibre_title=calibre_title,
-                                    hardcover_book_id=hc_book_id,
-                                    user_book_id=user_book_id,
-                                    field="progress_percent",
-                                    old_value=f"{hc_normalized}%"
-                                    if hc_normalized is not None
-                                    else "(empty)",
-                                    new_value=f"{calibre_normalized}%",
-                                    api_value=target_pages,
-                                    edition_id=edition_id,
-                                )
-                            )
-                            book_has_changes = True
-
-        # Compare date started
-        if date_started_col:
-            calibre_date = get_calibre_value(book_id, date_started_col)
-            if calibre_date:
-                calibre_date_str = str(calibre_date)[:10]
-                hc_current_date = (
-                    hc_user_book.latest_started_at[:10]
-                    if hc_user_book and hc_user_book.latest_started_at
-                    else None
-                )
-                if calibre_date_str != hc_current_date:
-                    result.changes.append(
-                        SyncToChange(
-                            calibre_id=book_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book_id,
-                            user_book_id=user_book_id,
-                            field="date_started",
-                            old_value=hc_current_date or "(empty)",
-                            new_value=calibre_date_str,
-                            api_value=calibre_date_str,
-                        )
-                    )
-                    book_has_changes = True
-
-        # Compare date read
-        if date_read_col:
-            calibre_date = get_calibre_value(book_id, date_read_col)
-            if calibre_date:
-                calibre_date_str = str(calibre_date)[:10]
-                hc_current_date = (
-                    hc_user_book.latest_finished_at[:10]
-                    if hc_user_book and hc_user_book.latest_finished_at
-                    else None
-                )
-                if calibre_date_str != hc_current_date:
-                    result.changes.append(
-                        SyncToChange(
-                            calibre_id=book_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book_id,
-                            user_book_id=user_book_id,
-                            field="date_read",
-                            old_value=hc_current_date or "(empty)",
-                            new_value=calibre_date_str,
-                            api_value=calibre_date_str,
-                        )
-                    )
-                    book_has_changes = True
-
-        # Compare review
-        if review_col:
-            calibre_review = get_calibre_value(book_id, review_col)
-            if calibre_review:
-                hc_current_review = hc_user_book.review if hc_user_book else None
-                if calibre_review != hc_current_review:
-                    result.changes.append(
-                        SyncToChange(
-                            calibre_id=book_id,
-                            calibre_title=calibre_title,
-                            hardcover_book_id=hc_book_id,
-                            user_book_id=user_book_id,
-                            field="review",
-                            old_value=truncate_for_display(hc_current_review),
-                            new_value=truncate_for_display(calibre_review),
-                            api_value=calibre_review,
-                        )
-                    )
-                    book_has_changes = True
-
-        if book_has_changes:
+        if user_book:
+            result.hardcover_data[hardcover_book.id] = user_book
+        context = _SyncToContext(
+            calibre_id=book_id,
+            calibre_title=title,
+            hardcover_book=hardcover_book,
+            user_book=user_book,
+            identifiers=identifiers,
+            columns=columns,
+            prefs=prefs,
+            get_value=get_calibre_value,
+            get_metadata=get_column_metadata,
+            warnings=result.warnings,
+        )
+        book_changes = []
+        for compare in _SYNC_TO_COMPARATORS:
+            book_changes.extend(compare(context))
+        if (
+            user_book is None
+            and book_changes
+            and not any(change.field == "status" for change in book_changes)
+        ):
+            result.warnings.append(
+                f"{title}: skipped changes because adding a book requires a mapped status"
+            )
+            continue
+        if book_changes:
+            result.changes.extend(book_changes)
             result.books_with_changes += 1
 
     return result
