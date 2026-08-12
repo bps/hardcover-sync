@@ -345,6 +345,25 @@ class TestAddBookToLibrary:
         assert user_book.book_id == 789
         assert user_book.status_id == 1
 
+    def test_add_book_sends_review_markdown(self, api, mock_client):
+        """Review text is included in the create mutation."""
+        mock_client.return_value.execute.return_value = {
+            "insert_user_book": {
+                "user_book": {
+                    "id": 1001,
+                    "book_id": 789,
+                    "status_id": 1,
+                    "rating": None,
+                    "updated_at": None,
+                }
+            }
+        }
+
+        api.add_book_to_library(book_id=789, status_id=1, review="Great book!")
+
+        variables = mock_client.return_value.execute.call_args.args[1]
+        assert variables["object"]["review_markdown"] == "Great book!"
+
 
 class TestUpdateUserBook:
     """Tests for the update_user_book method."""
@@ -368,6 +387,25 @@ class TestUpdateUserBook:
 
         assert user_book.status_id == 3
         assert user_book.rating == 5
+
+    def test_update_book_sends_review_markdown(self, api, mock_client):
+        """Review text is included in the update mutation."""
+        mock_client.return_value.execute.return_value = {
+            "update_user_book": {
+                "user_book": {
+                    "id": 1001,
+                    "book_id": 789,
+                    "status_id": 3,
+                    "rating": None,
+                    "updated_at": None,
+                }
+            }
+        }
+
+        api.update_user_book(user_book_id=1001, review="Great book!")
+
+        variables = mock_client.return_value.execute.call_args.args[1]
+        assert variables["object"]["review_markdown"] == "Great book!"
 
     def test_update_no_data(self, api, mock_client):
         """Test update when no data returned."""
@@ -1824,6 +1862,15 @@ class TestDryRunOptionalParams:
 
         log = dry_run_api.get_dry_run_log()
         assert log[0]["variables"]["object"]["last_read_date"] == "2024-12-25"
+
+    def test_add_and_update_review_use_review_markdown(self, dry_run_api, mock_client):
+        """Review text uses the writable GraphQL markdown field."""
+        dry_run_api.add_book_to_library(book_id=1, status_id=1, review="Created review")
+        dry_run_api.update_user_book(user_book_id=2, review="Updated review")
+
+        log = dry_run_api.get_dry_run_log()
+        assert log[0]["variables"]["object"]["review_markdown"] == "Created review"
+        assert log[1]["variables"]["object"]["review_markdown"] == "Updated review"
 
 
 class TestGetBookListMemberships:

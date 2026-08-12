@@ -244,6 +244,52 @@ class TestUserLists:
 
 
 # =============================================================================
+# Schema contract tests
+# =============================================================================
+
+
+class TestSchemaContracts:
+    """Verify the live schema still accepts fields used by mutation payloads."""
+
+    def test_sync_mutation_input_fields(self, api):
+        result = api._execute(
+            """
+            query SyncInputContracts {
+              create: __type(name: "UserBookCreateInput") {
+                inputFields { name }
+              }
+              update: __type(name: "UserBookUpdateInput") {
+                inputFields { name }
+              }
+              read: __type(name: "DatesReadInput") {
+                inputFields { name }
+              }
+            }
+            """
+        )
+
+        create_fields = {field["name"] for field in result["create"]["inputFields"]}
+        update_fields = {field["name"] for field in result["update"]["inputFields"]}
+        read_fields = {field["name"] for field in result["read"]["inputFields"]}
+        assert {
+            "book_id",
+            "status_id",
+            "rating",
+            "first_started_reading_date",
+            "last_read_date",
+            "review_markdown",
+        } <= create_fields
+        assert {
+            "status_id",
+            "rating",
+            "first_started_reading_date",
+            "last_read_date",
+            "review_markdown",
+        } <= update_fields
+        assert {"started_at", "finished_at", "progress_pages", "edition_id"} <= read_fields
+
+
+# =============================================================================
 # Dry-Run Mutation Tests
 # =============================================================================
 

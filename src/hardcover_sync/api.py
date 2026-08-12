@@ -590,7 +590,8 @@ class HardcoverAPI:
             user_book_input["last_read_date"] = (
                 str(finished_at) if isinstance(finished_at, date) else finished_at
             )
-        # Note: review is stored as review_slate (jsonb) - simple text not directly supported
+        if review is not None:
+            user_book_input["review_markdown"] = review
 
         result = self._execute_mutation(
             queries.INSERT_USER_BOOK_MUTATION,
@@ -637,7 +638,7 @@ class HardcoverAPI:
             rating: Optional new rating (0-5).
             started_at: Optional new start date (sets first_started_reading_date).
             finished_at: Optional new finish date (sets last_read_date).
-            review: Optional new review text (not currently supported by API).
+            review: Optional new review text.
 
         Returns:
             The updated UserBook.
@@ -661,7 +662,8 @@ class HardcoverAPI:
             user_book_input["last_read_date"] = (
                 str(finished_at) if isinstance(finished_at, date) else finished_at
             )
-        # Note: review is stored as review_slate (jsonb) - simple text not directly supported
+        if review is not None:
+            user_book_input["review_markdown"] = review
 
         result = self._execute_mutation(
             queries.UPDATE_USER_BOOK_MUTATION,
