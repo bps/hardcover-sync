@@ -33,8 +33,11 @@ jobs:
       - name: Check formatting
         run: uv run ruff format --check src/ test/ --exclude src/hardcover_sync/_version.py
 
+      - name: Run type checker
+        run: uv run pyright
+
       - name: Run tests
-        run: uv run pytest --tb=short -q
+        run: uv run pytest --tb=short -q -rs --cov-fail-under=90
 
   prek:
     runs-on: ubuntu-latest

@@ -19,10 +19,10 @@ setenv:
 test *ARGS:
     LD_LIBRARY_PATH="${CALIBRE_LIBRARY_PATH:-}" uv run pytest {{ARGS}}
 
-# Run tests with coverage report
+# Report coverage for core modules (Calibre/Qt adapters are excluded in pyproject.toml)
 coverage *ARGS:
-    LD_LIBRARY_PATH="${CALIBRE_LIBRARY_PATH:-}" uv run pytest --cov --cov-report=term-missing --cov-report=html {{ARGS}}
-    @echo "HTML report: htmlcov/index.html"
+    LD_LIBRARY_PATH="${CALIBRE_LIBRARY_PATH:-}" uv run pytest --cov --cov-report=term-missing --cov-report=html --cov-fail-under=90 {{ARGS}}
+    @echo "Core coverage HTML report: htmlcov/index.html"
 
 # Run linter and auto-fix issues
 lint:
@@ -33,6 +33,10 @@ lint:
 lint-check:
     uv run ruff check src/ test/
     uv run ruff format --check src/ test/
+
+# Run static type checking for production code
+typecheck:
+    uv run pyright
 
 # Remove build artifacts and caches
 clean:
