@@ -664,7 +664,7 @@ class TestUserBookRead:
             finished_at="2024-01-30",
             progress_pages=250,
             edition_id=456,
-            progress=0.34,
+            progress=34.0,
         )
 
         assert read.id == 100
@@ -672,8 +672,8 @@ class TestUserBookRead:
         assert read.finished_at == "2024-01-30"
         assert read.progress_pages == 250
         assert read.edition_id == 456
-        assert read.progress == 0.34
-        assert read.progress_percent == 34
+        assert read.progress == 34.0
+        assert read.progress_percent == 34.0
 
     def test_user_book_read_with_none_values(self):
         """Test UserBookRead with missing/None values."""
@@ -825,10 +825,10 @@ class TestUserBookCurrentProgress:
 
     def test_current_progress_with_read(self):
         """current_progress returns read.progress from latest read."""
-        read = UserBookRead(id=100, progress=0.75)
+        read = UserBookRead(id=100, progress=75.0)
         user_book = UserBook(id=1, book_id=1, reads=[read])
 
-        assert user_book.current_progress == 0.75
+        assert user_book.current_progress == 75.0
 
     def test_current_progress_none_when_no_reads(self):
         """current_progress returns None when there are no reads."""
@@ -844,7 +844,7 @@ class TestUserBookCurrentProgress:
 
     def test_current_progress_percent_with_read(self):
         """current_progress_percent returns progress as percentage."""
-        read = UserBookRead(id=100, progress=0.5)
+        read = UserBookRead(id=100, progress=50.0)
         user_book = UserBook(id=1, book_id=1, reads=[read])
 
         assert user_book.current_progress_percent == 50.0
@@ -1145,7 +1145,7 @@ class TestInsertUserBookRead:
                     "started_at": "2024-06-01",
                     "finished_at": None,
                     "paused_at": None,
-                    "progress": 0.25,
+                    "progress": 25.0,
                     "progress_pages": 75,
                     "edition_id": 456,
                 },
@@ -1156,15 +1156,21 @@ class TestInsertUserBookRead:
             user_book_id=1001,
             started_at="2024-06-01",
             progress_pages=75,
-            progress=0.25,
             edition_id=456,
         )
 
         assert read.id == 200
         assert read.started_at == "2024-06-01"
         assert read.progress_pages == 75
-        assert read.progress == 0.25
+        assert read.progress == 25.0
         assert read.edition_id == 456
+        variables = mock_client.return_value.execute.call_args.args[1]
+        assert variables["user_book_read"] == {
+            "started_at": "2024-06-01",
+            "progress_pages": 75,
+            "edition_id": 456,
+        }
+        assert "progress" not in variables["user_book_read"]
 
     def test_dry_run_insert_user_book_read(self, mock_client):
         """Test that insert_user_book_read is logged in dry-run mode."""
@@ -1198,7 +1204,7 @@ class TestUpdateUserBookRead:
                     "started_at": "2024-06-01",
                     "finished_at": "2024-06-15",
                     "paused_at": None,
-                    "progress": 1.0,
+                    "progress": 100.0,
                     "progress_pages": 300,
                     "edition_id": 456,
                 },
@@ -1208,14 +1214,19 @@ class TestUpdateUserBookRead:
         read = api.update_user_book_read(
             read_id=200,
             finished_at="2024-06-15",
-            progress=1.0,
             progress_pages=300,
         )
 
         assert read.id == 200
         assert read.finished_at == "2024-06-15"
-        assert read.progress == 1.0
+        assert read.progress == 100.0
         assert read.progress_pages == 300
+        variables = mock_client.return_value.execute.call_args.args[1]
+        assert variables["object"] == {
+            "finished_at": "2024-06-15",
+            "progress_pages": 300,
+        }
+        assert "progress" not in variables["object"]
 
     def test_update_user_book_read_no_data(self, api, mock_client):
         """Test update when no data returned."""

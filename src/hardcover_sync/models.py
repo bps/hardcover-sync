@@ -90,6 +90,7 @@ class Book:
     title: str
     slug: str | None = None
     release_date: str | None = None
+    pages: int | None = None
     authors: list[Author] | None = None
     editions: list[Edition] | None = None
 
@@ -118,6 +119,7 @@ class Book:
             title=data["title"],
             slug=data.get("slug"),
             release_date=data.get("release_date"),
+            pages=data.get("pages"),
             authors=authors if authors else None,
             editions=editions if editions else None,
         )
@@ -135,16 +137,15 @@ class UserBookRead:
     started_at: str | None = None
     finished_at: str | None = None
     paused_at: str | None = None
-    progress: float | None = None  # 0.0-1.0 percentage
+    progress: float | None = None  # Computed percentage on the 0-100 scale
     progress_pages: int | None = None
     edition_id: int | None = None
+    edition: Edition | None = None
 
     @property
     def progress_percent(self) -> float | None:
         """Get progress as a percentage (0-100)."""
-        if self.progress is not None:
-            return self.progress * 100
-        return None
+        return self.progress
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "UserBookRead":
@@ -157,6 +158,7 @@ class UserBookRead:
             progress=data.get("progress"),
             progress_pages=data.get("progress_pages"),
             edition_id=data.get("edition_id"),
+            edition=Edition.from_dict(data["edition"]) if data.get("edition") else None,
         )
 
 
@@ -222,7 +224,7 @@ class UserBook:
 
     @property
     def current_progress(self) -> float | None:
-        """Get progress (0.0-1.0) from the most recent read."""
+        """Get computed progress (0-100) from the most recent read."""
         read = self.latest_read
         return read.progress if read else None
 

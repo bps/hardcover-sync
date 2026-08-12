@@ -77,6 +77,7 @@ query {label}({param}) {{
         title
         slug
         release_date
+        pages
         contributions {{
             author {{
                 id
@@ -123,6 +124,10 @@ _USER_BOOK_READS_FIELDS = """
             progress
             progress_pages
             edition_id
+            edition {
+                id
+                pages
+            }
         }"""
 
 _BOOK_SUBQUERY = """
@@ -131,6 +136,7 @@ _BOOK_SUBQUERY = """
             title
             slug
             release_date
+            pages
             contributions {
                 author {
                     id
@@ -166,7 +172,7 @@ query UserBookByBookId($user_id: Int!, $book_id: Int!) {{
             book_id: {{_eq: $book_id}}
         }},
         limit: 1
-    ) {{{_USER_BOOK_FIELDS}{_USER_BOOK_READS_FIELDS}
+    ) {{{_USER_BOOK_FIELDS}{_BOOK_SUBQUERY}{_USER_BOOK_READS_FIELDS}
     }}
 }}
 """

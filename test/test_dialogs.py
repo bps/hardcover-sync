@@ -164,6 +164,49 @@ class TestDialogHelpers:
         assert _book_isbns(Book(id=2, title="No ISBN", editions=None)) == ""
 
 
+class TestSyncToProgressPayloads:
+    """Tests for converted percentage progress payloads."""
+
+    def _change(self, field, pages, edition_id=None):
+        from hardcover_sync.sync import SyncToChange
+
+        return SyncToChange(
+            calibre_id=1,
+            calibre_title="Test Book",
+            hardcover_book_id=100,
+            user_book_id=10,
+            field=field,
+            old_value="10%",
+            new_value="50%",
+            api_value=pages,
+            edition_id=edition_id,
+        )
+
+    def test_percentage_progress_sends_pages_and_edition(self):
+        """Converted percentage uses only valid DatesReadInput fields."""
+        from hardcover_sync.sync import build_sync_to_payloads
+
+        _, read_data = build_sync_to_payloads(
+            [self._change("progress_percent", 160, edition_id=9)], {}
+        )
+
+        assert read_data == {"progress_pages": 160, "edition_id": 9}
+        assert "progress" not in read_data
+
+    def test_page_progress_wins_defensively_during_apply(self):
+        """Payload order cannot let percentage overwrite explicit page progress."""
+        from hardcover_sync.sync import build_sync_to_payloads
+
+        changes = [
+            self._change("progress_percent", 160, edition_id=9),
+            self._change("progress", 123, edition_id=8),
+        ]
+
+        _, read_data = build_sync_to_payloads(changes, {})
+
+        assert read_data == {"progress_pages": 123, "edition_id": 8}
+
+
 # =============================================================================
 # Test API list methods that dialogs use
 # =============================================================================

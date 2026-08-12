@@ -717,11 +717,10 @@ class HardcoverAPI:
         self,
         started_at: date | str | None = None,
         finished_at: date | str | None = None,
-        progress: float | None = None,
         progress_pages: int | None = None,
         edition_id: int | None = None,
     ) -> dict[str, Any]:
-        """Build a read input dict for insert/update user book read mutations."""
+        """Build a read input dict using fields accepted by DatesReadInput."""
         read_input: dict[str, Any] = {}
 
         if started_at is not None:
@@ -732,8 +731,6 @@ class HardcoverAPI:
             read_input["finished_at"] = (
                 str(finished_at) if isinstance(finished_at, date) else finished_at
             )
-        if progress is not None:
-            read_input["progress"] = progress
         if progress_pages is not None:
             read_input["progress_pages"] = progress_pages
         if edition_id is not None:
@@ -750,28 +747,13 @@ class HardcoverAPI:
         user_book_id: int,
         started_at: date | str | None = None,
         finished_at: date | str | None = None,
-        progress: float | None = None,
         progress_pages: int | None = None,
         edition_id: int | None = None,
     ) -> UserBookRead:
-        """
-        Create a new reading session for a book.
-
-        Args:
-            user_book_id: The user_book ID to add a read to.
-            started_at: When reading started.
-            finished_at: When reading finished.
-            progress: Progress as decimal (0.0-1.0).
-            progress_pages: Progress in pages.
-            edition_id: Optional specific edition being read.
-
-        Returns:
-            The created UserBookRead.
-        """
+        """Create a new reading session for a book."""
         read_input = self._build_read_input(
             started_at=started_at,
             finished_at=finished_at,
-            progress=progress,
             progress_pages=progress_pages,
             edition_id=edition_id,
         )
@@ -788,7 +770,7 @@ class HardcoverAPI:
                         "started_at": read_input.get("started_at"),
                         "finished_at": read_input.get("finished_at"),
                         "paused_at": None,
-                        "progress": progress,
+                        "progress": None,
                         "progress_pages": progress_pages,
                         "edition_id": edition_id,
                     },
@@ -803,28 +785,13 @@ class HardcoverAPI:
         read_id: int,
         started_at: date | str | None = None,
         finished_at: date | str | None = None,
-        progress: float | None = None,
         progress_pages: int | None = None,
         edition_id: int | None = None,
     ) -> UserBookRead:
-        """
-        Update an existing reading session.
-
-        Args:
-            read_id: The user_book_read ID to update.
-            started_at: When reading started.
-            finished_at: When reading finished.
-            progress: Progress as decimal (0.0-1.0).
-            progress_pages: Progress in pages.
-            edition_id: Optional specific edition being read.
-
-        Returns:
-            The updated UserBookRead.
-        """
+        """Update an existing reading session."""
         read_input = self._build_read_input(
             started_at=started_at,
             finished_at=finished_at,
-            progress=progress,
             progress_pages=progress_pages,
             edition_id=edition_id,
         )
@@ -841,7 +808,7 @@ class HardcoverAPI:
                         "started_at": read_input.get("started_at"),
                         "finished_at": read_input.get("finished_at"),
                         "paused_at": None,
-                        "progress": progress,
+                        "progress": None,
                         "progress_pages": progress_pages,
                         "edition_id": edition_id,
                     },
