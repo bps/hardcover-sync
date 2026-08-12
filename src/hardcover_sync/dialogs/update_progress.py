@@ -6,6 +6,7 @@ This dialog allows the user to update reading progress for selected books.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from qt.core import (
@@ -18,6 +19,8 @@ from qt.core import (
 )
 
 from .base import HardcoverDialogBase
+
+logger = logging.getLogger(__name__)
 
 
 class UpdateProgressDialog(HardcoverDialogBase):
@@ -113,8 +116,8 @@ class UpdateProgressDialog(HardcoverDialogBase):
             user_book = api.get_user_book(hc_id)
             if user_book and user_book.current_progress_pages:
                 self.page_spinbox.setValue(user_book.current_progress_pages)
-        except Exception:  # noqa: S110
-            pass  # Non-critical: just show default values if we can't load current progress
+        except Exception as error:
+            logger.warning("Could not load current reading progress: %s", error)
 
     def _on_apply(self) -> None:
         """Apply the progress update."""
@@ -203,5 +206,5 @@ class UpdateProgressDialog(HardcoverDialogBase):
         try:
             if column.startswith("#"):
                 self.db.set_field(column, {book_id: page_num if page_num > 0 else None})
-        except Exception:  # noqa: S110
-            pass  # Column update is best-effort, don't interrupt user flow
+        except Exception as error:
+            logger.warning("Could not update Calibre progress for book %s: %s", book_id, error)
