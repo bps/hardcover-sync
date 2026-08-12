@@ -57,6 +57,7 @@ dev = [
     "ruff>=0.8",
     "prek>=0.3",
     "gitlint>=0.19",
+    "pyright>=1.1.411",
 ]
 
 [tool.pytest.ini_options]
@@ -65,6 +66,8 @@ addopts = "--cov=src/hardcover_sync -v --import-mode=importlib"
 
 [tool.coverage.run]
 branch = true
+# Core coverage only. Calibre/Qt adapter modules are exercised by smoke tests
+# but excluded from this percentage because they require the host runtime.
 omit = [
     "*test*",
     "*_version*",
@@ -75,6 +78,9 @@ omit = [
     "*/__init__.py",
 ]
 source = ["src/hardcover_sync"]
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.ruff]
 line-length = 100
@@ -89,6 +95,8 @@ ignore = ["UP007"]  # Allow X | Y union syntax
 "test/*.py" = ["S101"]  # Allow assert in tests
 
 [tool.pyright]
+include = ["src"]
+exclude = ["build"]
 typeCheckingMode = "standard"
 pythonVersion = "3.10"
 # Calibre provides these modules at runtime - they're not installable packages
