@@ -2,15 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.2] - 2026-08-12
+
+### Bug Fixes
+
+- Sync percentage progress via pages
 ## [0.4.1] - 2026-08-10
 
 ### Bug Fixes
 
-- Prevent API token validation failures caused by conflicting GraphQL packages (#16)
+- Remove GraphQL runtime dependencies
 
 ### Build
 
 - Suffix development artifacts with commit
+
+### Documentation
+
+- Update changelog for v0.4.1
 ## [0.4.0] - 2026-08-08
 
 ### Bug Fixes
@@ -23,6 +32,7 @@ All notable changes to this project will be documented in this file.
 ### Documentation
 
 - Add Hardcover link status column tip
+- Update changelog for v0.4.0
 
 ### Features
 
