@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-08-15
+
+### Bug Fixes
+
+- Write reviews through GraphQL markdown field
+- Preserve edition links across cached matches
+- Report action and progress update failures
+
+### Build
+
+- Add type checking and coverage configuration
+
+### CI/CD
+
+- Enforce type and coverage checks
+- Schedule Hardcover API contract tests
+
+### Documentation
+
+- Clarify sync clearing and development checks
+
+### Refactoring
+
+- Reduce cache to session ISBN matches
+- Simplify sync configuration and status mappings
+- Extract synchronization orchestration services
+- Split synchronization field comparisons
+- Delegate sync dialogs to tested services
+
+### Testing
+
+- Add Calibre and operation guard contracts
+
 ## [0.4.2] - 2026-08-12
 
 ### Bug Fixes
