@@ -16,4 +16,4 @@ CALIBRE_DEVELOP_FROM = "{{env.CALIBRE_HOME}}/source/src"
 PYTHONPATH = "{{env.CALIBRE_DEVELOP_FROM}}"
 
 [settings.python]
-uv_venv_auto = true
+uv_venv_auto = "create|source"
