@@ -6,6 +6,7 @@ This module defines the toolbar button and menu structure.
 
 from __future__ import annotations
 
+import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +18,24 @@ from .config import MENU_STATUSES, READING_STATUSES, get_plugin_prefs
 
 if TYPE_CHECKING:
     from .api import HardcoverAPI
+
+logger = logging.getLogger(__name__)
+
+
+def update_calibre_status(db: Any, book_id: int, status_id: int, prefs: Any) -> None:
+    """Write the configured Calibre status value for a Hardcover status."""
+    from .sync import get_status_from_hardcover
+
+    status_column = prefs.get("status_column")
+    if not status_column:
+        return
+    status_name = get_status_from_hardcover(status_id, prefs.get("status_mappings", {}))
+    if not status_name:
+        return
+    try:
+        db.set_field(status_column, {book_id: status_name})
+    except Exception as error:
+        logger.warning("Could not update Calibre status for book %s: %s", book_id, error)
 
 
 class HardcoverSyncAction(InterfaceAction):
@@ -181,20 +200,7 @@ class HardcoverSyncAction(InterfaceAction):
 
     def _update_calibre_status(self, db: Any, book_id: int, status_id: int) -> None:
         """Update the Calibre status column if configured."""
-        prefs = get_plugin_prefs()
-        status_column = prefs.get("status_column")
-
-        if not status_column:
-            return  # No column mapped
-
-        status_name = READING_STATUSES.get(status_id, "Unknown")
-
-        try:
-            # Get the column label without the # prefix
-            col_name = status_column.lstrip("#")
-            db.set_field(f"#{col_name}", {book_id: status_name})
-        except Exception:  # noqa: S110
-            pass  # Column update is best-effort, don't interrupt user flow
+        update_calibre_status(db, book_id, status_id, get_plugin_prefs())
 
     def set_reading_status(self, status_id: int) -> None:
         """Set the reading status for selected books on Hardcover."""
@@ -322,19 +328,19 @@ class HardcoverSyncAction(InterfaceAction):
 
         # Remove books
         success = 0
-        for _, user_book_id, _ in to_remove:
+        failures = []
+        for _, user_book_id, title in to_remove:
             try:
                 api.remove_book_from_library(user_book_id)
                 success += 1
-            except Exception:  # noqa: S110
-                pass  # Continue removing other books even if one fails
+            except Exception as error:
+                failures.append(title)
+                logger.warning("Could not remove %s from Hardcover: %s", title, error)
 
-        info_dialog(
-            self.gui,
-            "Removed",
-            f"Removed {success} book(s) from your Hardcover library.",
-            show=True,
-        )
+        message = f"Removed {success} book(s) from your Hardcover library."
+        if failures:
+            message += f"\n\nFailed to remove {len(failures)} book(s): {', '.join(failures[:3])}"
+        info_dialog(self.gui, "Removed", message, show=True)
 
     def update_progress(self) -> None:
         """Update reading progress for selected book."""

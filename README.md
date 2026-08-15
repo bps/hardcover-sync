@@ -105,6 +105,10 @@ Before syncing, books must be linked between Calibre and Hardcover:
 - Preview changes before applying
 - Can add books to your Hardcover library or update existing books
 
+Sync is intentionally non-destructive: an empty mapped value is treated as “no update” rather
+than a request to clear the value on the other service. Clear values manually on both sides when
+needed.
+
 ## Tips & tricks
 
 ### Show Hardcover link status in the book list
@@ -151,8 +155,8 @@ just test           # Run tests
 just build          # Build plugin zip
 just install-plugin # Install to test Calibre instance
 just calibre        # Launch isolated test Calibre
-just lint           # Run linter
-just format         # Format code
+just lint           # Run linter and formatter
+just typecheck      # Run Pyright on production code
 ```
 
 ### Pre-commit hooks

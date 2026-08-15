@@ -120,6 +120,8 @@ def get_hardcover_book_id(db: Any, book_id: int) -> int | None:
 
 def normalize_hardcover_id(value: object) -> int | None:
     """Return a positive Hardcover ID, or None for placeholders/invalid values."""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
     try:
         hardcover_id = int(value)
     except (TypeError, ValueError):
@@ -246,6 +248,15 @@ def match_by_isbn(api: HardcoverAPI, isbn: str) -> MatchResult:
         # Return cached result - we need to fetch full book data though
         book = api.get_book_by_id(cached.hardcover_id)
         if book:
+            if cached.edition_id and book.editions:
+                matched_edition = next(
+                    (edition for edition in book.editions if edition.id == cached.edition_id),
+                    None,
+                )
+                if matched_edition:
+                    book.editions = [matched_edition] + [
+                        edition for edition in book.editions if edition.id != cached.edition_id
+                    ]
             return MatchResult(
                 book=book,
                 match_type="isbn",

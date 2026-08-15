@@ -9,6 +9,7 @@ This module provides:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 # Calibre imports - only available in Calibre's runtime environment
@@ -64,8 +65,6 @@ DEFAULT_PREFS = {
     "date_read_column": "",
     "is_read_column": "",  # Boolean Yes/No column (True when status is "Read")
     "review_column": "",
-    "lists_column": "",
-    "use_tags_for_lists": True,
     # Status value mappings (Hardcover status ID -> Calibre column value)
     # e.g., {1: "Want to Read", 2: "Currently Reading", ...}
     "status_mappings": {},
@@ -73,13 +72,11 @@ DEFAULT_PREFS = {
     # Empty list means all statuses; otherwise list of status IDs to include
     "sync_statuses": [],  # Default: sync all statuses
     # Sync behavior
-    "conflict_resolution": "ask",  # ask, hardcover, calibre, newest
     "auto_link_exact_match": True,
     "sync_rating": True,
     "sync_progress": True,
     "sync_dates": True,
     "sync_review": True,
-    "sync_lists": True,
     # Lab / Experimental features
     "enable_lab_update_progress": False,
     "enable_lab_lists": False,
@@ -91,6 +88,8 @@ DEFAULT_PREFS = {
 # Plugin configuration storage
 prefs = JSONConfig("plugins/Hardcover Sync")
 prefs.defaults = DEFAULT_PREFS
+
+logger = logging.getLogger(__name__)
 
 
 def get_plugin_prefs() -> JSONConfig:
@@ -120,6 +119,15 @@ def get_unmapped_columns(plugin_prefs: Any = None) -> list[str]:
         if not plugin_prefs.get(pref_key, ""):
             unmapped.append(display_name)
     return unmapped
+
+
+def get_status_mapping_conflicts(status_mappings: dict[str, str]) -> dict[str, list[int]]:
+    """Return Calibre status values that map to multiple Hardcover statuses."""
+    statuses_by_value: dict[str, list[int]] = {}
+    for status_id, default_name in READING_STATUSES.items():
+        value = status_mappings.get(str(status_id)) or default_name
+        statuses_by_value.setdefault(value, []).append(status_id)
+    return {value: ids for value, ids in statuses_by_value.items() if len(ids) > 1}
 
 
 def get_column_mappings(plugin_prefs: Any = None) -> dict[str, str]:
@@ -258,7 +266,6 @@ class ConfigWidget:
     - Column mapping dropdowns
     - Status value mapping
     - Sync options
-    - Conflict resolution settings
     """
 
     def __init__(self, plugin_action: Any = None) -> None:
@@ -377,78 +384,36 @@ class ConfigWidget:
         date_columns = self._get_custom_columns(["datetime"])
         bool_columns = self._get_custom_columns(["bool"])
         text_columns = self._get_custom_columns(["text", "comments"])
-        tags_columns = self._get_tags_columns()
 
-        # Status column (enumeration preferred) - always visible
-        self.status_combo = CustomColumnComboBox(tab, enum_columns, prefs.get("status_column", ""))
-        self.status_combo.setMinimumWidth(200)
-        self.columns_layout.addRow("Reading Status:", self.status_combo.widget())
-
-        # Rating column - controlled by sync_rating
-        self.rating_combo = CustomColumnComboBox(
-            tab, rating_columns, prefs.get("rating_column", "")
-        )
-        self.rating_combo.setMinimumWidth(200)
-        self.columns_layout.addRow("Rating:", self.rating_combo.widget())
-        self.rating_row = self.columns_layout.rowCount() - 1
-
-        # Progress column (integer for pages) - controlled by sync_progress
-        self.progress_combo = CustomColumnComboBox(
-            tab, int_columns, prefs.get("progress_column", "")
-        )
-        self.progress_combo.setMinimumWidth(200)
-        self.columns_layout.addRow("Progress (pages):", self.progress_combo.widget())
-        self.progress_row = self.columns_layout.rowCount() - 1
-
-        # Progress percent column (integer or float) - controlled by sync_progress
-        self.progress_percent_combo = CustomColumnComboBox(
-            tab, percent_columns, prefs.get("progress_percent_column", "")
-        )
-        self.progress_percent_combo.setMinimumWidth(200)
-        self.columns_layout.addRow("Progress (%):", self.progress_percent_combo.widget())
-        self.progress_percent_row = self.columns_layout.rowCount() - 1
-
-        # Date started column - controlled by sync_dates
-        self.date_started_combo = CustomColumnComboBox(
-            tab, date_columns, prefs.get("date_started_column", "")
-        )
-        self.date_started_combo.setMinimumWidth(200)
-        self.columns_layout.addRow("Date Started:", self.date_started_combo.widget())
-        self.date_started_row = self.columns_layout.rowCount() - 1
-
-        # Date read column - controlled by sync_dates
-        self.date_read_combo = CustomColumnComboBox(
-            tab, date_columns, prefs.get("date_read_column", "")
-        )
-        self.date_read_combo.setMinimumWidth(200)
-        self.columns_layout.addRow("Date Read:", self.date_read_combo.widget())
-        self.date_read_row = self.columns_layout.rowCount() - 1
-
-        # Is Read column (boolean Yes/No) - controlled by sync_dates
-        # Automatically set to Yes when date_read is set
-        self.is_read_combo = CustomColumnComboBox(
-            tab, bool_columns, prefs.get("is_read_column", "")
-        )
-        self.is_read_combo.setMinimumWidth(200)
-        self.columns_layout.addRow("Is Read (Yes/No):", self.is_read_combo.widget())
-        self.is_read_row = self.columns_layout.rowCount() - 1
-
-        # Review column (long text) - controlled by sync_review
-        self.review_combo = CustomColumnComboBox(tab, text_columns, prefs.get("review_column", ""))
-        self.review_combo.setMinimumWidth(200)
-        self.columns_layout.addRow("Review:", self.review_combo.widget())
-        self.review_row = self.columns_layout.rowCount() - 1
-
-        # Lists column - controlled by sync_lists
-        self.lists_combo = CustomColumnComboBox(
-            tab,
-            tags_columns,
-            prefs.get("lists_column", "") if not prefs.get("use_tags_for_lists", True) else "tags",
-            initial_items={"tags": "Tags (built-in)", "": "(Not mapped)"},
-        )
-        self.lists_combo.setMinimumWidth(200)
-        self.columns_layout.addRow("Lists:", self.lists_combo.widget())
-        self.lists_row = self.columns_layout.rowCount() - 1
+        column_specs = [
+            ("status", "Reading Status:", enum_columns, "status_column", None),
+            ("rating", "Rating:", rating_columns, "rating_column", "rating_row"),
+            ("progress", "Progress (pages):", int_columns, "progress_column", "progress_row"),
+            (
+                "progress_percent",
+                "Progress (%):",
+                percent_columns,
+                "progress_percent_column",
+                "progress_percent_row",
+            ),
+            (
+                "date_started",
+                "Date Started:",
+                date_columns,
+                "date_started_column",
+                "date_started_row",
+            ),
+            ("date_read", "Date Read:", date_columns, "date_read_column", "date_read_row"),
+            ("is_read", "Is Read (Yes/No):", bool_columns, "is_read_column", "is_read_row"),
+            ("review", "Review:", text_columns, "review_column", "review_row"),
+        ]
+        for name, label, columns, pref_key, row_attribute in column_specs:
+            combo = CustomColumnComboBox(tab, columns, prefs.get(pref_key, ""))
+            combo.setMinimumWidth(200)
+            self.columns_layout.addRow(label, combo.widget())
+            setattr(self, f"{name}_combo", combo)
+            if row_attribute:
+                setattr(self, row_attribute, self.columns_layout.rowCount() - 1)
 
         layout.addWidget(columns_group)
 
@@ -468,7 +433,8 @@ class ConfigWidget:
 
         instructions = QLabel(
             "Enter the values your status column uses for each Hardcover status. "
-            "Leave blank to skip a status."
+            "Leave blank to use the default Hardcover status name. Use the status "
+            "checkboxes on the Sync Options tab to skip statuses."
         )
         instructions.setWordWrap(True)
         layout.addRow(instructions)
@@ -483,17 +449,39 @@ class ConfigWidget:
             # Load saved value (convert status_id to string for JSON compatibility)
             saved_value = saved_mappings.get(str(status_id), "")
             input_field.setText(saved_value)
+            input_field.textChanged.connect(self._update_status_mapping_warning)
             layout.addRow(f"{status_name}:", input_field)
             self.status_mapping_inputs[status_id] = input_field
 
+        self.status_mapping_warning = QLabel()
+        self.status_mapping_warning.setWordWrap(True)
+        self.status_mapping_warning.setStyleSheet("color: #b35900;")
+        layout.addRow(self.status_mapping_warning)
+        self._update_status_mapping_warning()
+
         parent_layout.addWidget(group)
+
+    def _update_status_mapping_warning(self) -> None:
+        """Warn when multiple Hardcover statuses resolve to the same Calibre value."""
+        mappings = {}
+        for status_id, input_field in self.status_mapping_inputs.items():
+            value = input_field.text()
+            if isinstance(value, str) and value.strip():
+                mappings[str(status_id)] = value.strip()
+        conflicts = get_status_mapping_conflicts(mappings)
+        if conflicts:
+            values = ", ".join(sorted(conflicts))
+            self.status_mapping_warning.setText(
+                f"⚠ Ambiguous status value(s) will not sync to Hardcover: {values}"
+            )
+            self.status_mapping_warning.setVisible(True)
+        else:
+            self.status_mapping_warning.setVisible(False)
 
     def _create_sync_tab(self) -> None:
         """Create the Sync Options tab."""
         from qt.core import (
             QCheckBox,
-            QComboBox,
-            QFormLayout,
             QGroupBox,
             QLabel,
             QVBoxLayout,
@@ -527,11 +515,6 @@ class ConfigWidget:
         self.sync_review_checkbox.stateChanged.connect(self._update_column_visibility)
         sync_layout.addWidget(self.sync_review_checkbox)
 
-        self.sync_lists_checkbox = QCheckBox("Sync lists as tags")
-        self.sync_lists_checkbox.setChecked(prefs.get("sync_lists", True))
-        self.sync_lists_checkbox.stateChanged.connect(self._update_column_visibility)
-        sync_layout.addWidget(self.sync_lists_checkbox)
-
         layout.addWidget(sync_group)
 
         # Linking options group
@@ -554,8 +537,8 @@ class ConfigWidget:
         status_filter_layout = QVBoxLayout(status_filter_group)
 
         status_filter_label = QLabel(
-            "Select which reading statuses to include when syncing from Hardcover. "
-            "Unchecked statuses will be skipped when creating new books."
+            "Select which reading statuses to include in either sync direction. "
+            "Unchecked statuses are also skipped when creating new books."
         )
         status_filter_label.setWordWrap(True)
         status_filter_layout.addWidget(status_filter_label)
@@ -570,38 +553,22 @@ class ConfigWidget:
             checkbox = QCheckBox(status_name)
             # If list is empty, all are enabled; otherwise check if in list
             checkbox.setChecked(all_enabled or status_id in enabled_statuses)
+            checkbox.stateChanged.connect(
+                lambda _state, changed=checkbox: self._ensure_status_filter_not_empty(changed)
+            )
             self.status_filter_checkboxes[status_id] = checkbox
             status_filter_layout.addWidget(checkbox)
 
         layout.addWidget(status_filter_group)
 
-        # Conflict resolution group
-        conflict_group = QGroupBox("Conflict Resolution")
-        conflict_layout = QFormLayout(conflict_group)
-
-        conflict_label = QLabel("When values differ between Calibre and Hardcover during sync:")
-        conflict_label.setWordWrap(True)
-        conflict_layout.addRow(conflict_label)
-
-        self.conflict_combo = QComboBox()
-        self.conflict_combo.addItem("Ask each time", "ask")
-        self.conflict_combo.addItem("Always use Hardcover value", "hardcover")
-        self.conflict_combo.addItem("Always use Calibre value", "calibre")
-        self.conflict_combo.addItem("Use most recently updated", "newest")
-
-        # Set current value
-        current_resolution = prefs.get("conflict_resolution", "ask")
-        for i in range(self.conflict_combo.count()):
-            if self.conflict_combo.itemData(i) == current_resolution:
-                self.conflict_combo.setCurrentIndex(i)
-                break
-
-        conflict_layout.addRow("Resolution strategy:", self.conflict_combo)
-
-        layout.addWidget(conflict_group)
         layout.addStretch()
 
         self.tabs.addTab(tab, "Sync Options")
+
+    def _ensure_status_filter_not_empty(self, changed_checkbox: Any) -> None:
+        """Keep at least one status enabled so an empty list cannot mean all."""
+        if not any(checkbox.isChecked() for checkbox in self.status_filter_checkboxes.values()):
+            changed_checkbox.setChecked(True)
 
     def _create_lab_tab(self) -> None:
         """Create the Lab (experimental features) tab."""
@@ -662,7 +629,8 @@ class ConfigWidget:
 
         try:
             custom_columns = self.plugin_action.gui.library_view.model().custom_columns
-        except Exception:
+        except Exception as error:
+            logger.debug("Could not inspect Calibre custom columns: %s", error)
             return {}
 
         available = {}
@@ -681,14 +649,11 @@ class ConfigWidget:
                 model = self.plugin_action.gui.library_view.model()
                 rating_name = model.orig_headers.get("rating", "Rating")
                 columns["rating"] = {"name": rating_name}
-            except Exception:
+            except Exception as error:
+                logger.debug("Could not inspect Calibre's rating header: %s", error)
                 columns["rating"] = {"name": "Rating"}
 
         return columns
-
-    def _get_tags_columns(self) -> dict:
-        """Get columns suitable for tags/lists."""
-        return self._get_custom_columns(["text"])
 
     def _update_column_visibility(self) -> None:
         """Update visibility of column mapping rows based on sync feature toggles."""
@@ -696,41 +661,19 @@ class ConfigWidget:
         if not hasattr(self, "columns_layout"):
             return
 
-        # Rating row - controlled by sync_rating
-        if hasattr(self, "rating_row"):
-            self.columns_layout.setRowVisible(
-                self.rating_row, self.sync_rating_checkbox.isChecked()
-            )
-
-        # Progress rows - controlled by sync_progress
-        if hasattr(self, "progress_row"):
-            self.columns_layout.setRowVisible(
-                self.progress_row, self.sync_progress_checkbox.isChecked()
-            )
-        if hasattr(self, "progress_percent_row"):
-            self.columns_layout.setRowVisible(
-                self.progress_percent_row, self.sync_progress_checkbox.isChecked()
-            )
-
-        # Date rows - controlled by sync_dates
-        if hasattr(self, "date_started_row"):
-            self.columns_layout.setRowVisible(
-                self.date_started_row, self.sync_dates_checkbox.isChecked()
-            )
-        if hasattr(self, "date_read_row"):
-            self.columns_layout.setRowVisible(
-                self.date_read_row, self.sync_dates_checkbox.isChecked()
-            )
-
-        # Review row - controlled by sync_review
-        if hasattr(self, "review_row"):
-            self.columns_layout.setRowVisible(
-                self.review_row, self.sync_review_checkbox.isChecked()
-            )
-
-        # Lists row - controlled by sync_lists
-        if hasattr(self, "lists_row"):
-            self.columns_layout.setRowVisible(self.lists_row, self.sync_lists_checkbox.isChecked())
+        visibility_specs = [
+            ("rating_row", self.sync_rating_checkbox),
+            ("progress_row", self.sync_progress_checkbox),
+            ("progress_percent_row", self.sync_progress_checkbox),
+            ("date_started_row", self.sync_dates_checkbox),
+            ("date_read_row", self.sync_dates_checkbox),
+            ("review_row", self.sync_review_checkbox),
+        ]
+        for row_attribute, checkbox in visibility_specs:
+            if hasattr(self, row_attribute):
+                self.columns_layout.setRowVisible(
+                    getattr(self, row_attribute), checkbox.isChecked()
+                )
 
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to the internal widget."""
@@ -856,23 +799,9 @@ class ConfigWidget:
                 prefs["user_id"] = None
 
         # Save column mappings
-        prefs["status_column"] = self.status_combo.get_selected_column()
-        prefs["rating_column"] = self.rating_combo.get_selected_column()
-        prefs["progress_column"] = self.progress_combo.get_selected_column()
-        prefs["progress_percent_column"] = self.progress_percent_combo.get_selected_column()
-        prefs["date_started_column"] = self.date_started_combo.get_selected_column()
-        prefs["date_read_column"] = self.date_read_combo.get_selected_column()
-        prefs["is_read_column"] = self.is_read_combo.get_selected_column()
-        prefs["review_column"] = self.review_combo.get_selected_column()
-
-        # Lists column handling
-        lists_selection = self.lists_combo.get_selected_column()
-        if lists_selection == "tags":
-            prefs["use_tags_for_lists"] = True
-            prefs["lists_column"] = ""
-        else:
-            prefs["use_tags_for_lists"] = False
-            prefs["lists_column"] = lists_selection
+        for field, _ in SYNCABLE_COLUMNS:
+            combo_name = f"{field.removesuffix('_column')}_combo"
+            prefs[field] = getattr(self, combo_name).get_selected_column()
 
         # Save status mappings
         status_mappings = {}
@@ -883,12 +812,15 @@ class ConfigWidget:
         prefs["status_mappings"] = status_mappings
 
         # Save sync options
-        prefs["auto_link_exact_match"] = self.auto_link_checkbox.isChecked()
-        prefs["sync_rating"] = self.sync_rating_checkbox.isChecked()
-        prefs["sync_progress"] = self.sync_progress_checkbox.isChecked()
-        prefs["sync_dates"] = self.sync_dates_checkbox.isChecked()
-        prefs["sync_review"] = self.sync_review_checkbox.isChecked()
-        prefs["sync_lists"] = self.sync_lists_checkbox.isChecked()
+        checkbox_prefs = {
+            "auto_link_exact_match": self.auto_link_checkbox,
+            "sync_rating": self.sync_rating_checkbox,
+            "sync_progress": self.sync_progress_checkbox,
+            "sync_dates": self.sync_dates_checkbox,
+            "sync_review": self.sync_review_checkbox,
+        }
+        for pref_key, checkbox in checkbox_prefs.items():
+            prefs[pref_key] = checkbox.isChecked()
 
         # Save reading status filter
         # If all are checked, save empty list (means "all")
@@ -898,13 +830,10 @@ class ConfigWidget:
             for status_id, checkbox in self.status_filter_checkboxes.items()
             if checkbox.isChecked()
         ]
-        if len(checked_statuses) == len(READING_STATUSES):
-            prefs["sync_statuses"] = []  # All enabled
+        if not checked_statuses or len(checked_statuses) == len(READING_STATUSES):
+            prefs["sync_statuses"] = []  # All enabled; the UI prevents selecting none
         else:
             prefs["sync_statuses"] = checked_statuses
-
-        # Save conflict resolution
-        prefs["conflict_resolution"] = self.conflict_combo.currentData()
 
         # Save Lab options
         prefs["enable_lab_update_progress"] = self.lab_update_progress_checkbox.isChecked()

@@ -5,11 +5,13 @@ This tests the extracted business logic for syncing between Hardcover and Calibr
 """
 
 from hardcover_sync.models import Author, Book, Edition, UserBook
+from hardcover_sync.services import apply_sync_to_book
 from hardcover_sync.sync import (
     NewBookAction,
     SyncChange,
     SyncToChange,
     SyncToResult,
+    build_sync_from_values,
     coerce_value_for_column,
     convert_rating_from_calibre,
     convert_rating_to_calibre,
@@ -21,8 +23,19 @@ from hardcover_sync.sync import (
     get_status_from_calibre,
     get_status_from_hardcover,
     normalize_progress_percent,
+    normalize_review_text,
     truncate_for_display,
 )
+
+
+class TestNormalizeReviewText:
+    def test_converts_calibre_comments_html_to_plain_text(self):
+        assert normalize_review_text(
+            "<div>Great <b>book</b></div><p>Recommended &amp; fun</p>"
+        ) == ("Great book\nRecommended & fun")
+
+    def test_preserves_markdown_text(self):
+        assert normalize_review_text("**Great** book") == "**Great** book"
 
 
 class TestNormalizeProgressPercent:
@@ -198,6 +211,80 @@ class TestSyncToChange:
         assert change.display_field == "Rating"
 
 
+class TestApplySyncToBook:
+    """Tests for per-book apply outcomes."""
+
+    @staticmethod
+    def _change(field, api_value, *, user_book_id=10):
+        return SyncToChange(
+            calibre_id=1,
+            calibre_title="Test Book",
+            hardcover_book_id=100,
+            user_book_id=user_book_id,
+            field=field,
+            old_value=None,
+            new_value=str(api_value),
+            api_value=api_value,
+        )
+
+    def test_reports_user_book_success_when_read_update_fails(self):
+        """A later read failure does not erase an earlier successful mutation."""
+        from unittest.mock import Mock
+
+        from hardcover_sync.models import UserBookRead
+
+        api = Mock()
+        api.update_user_book_read.side_effect = RuntimeError("read failed")
+        current = UserBook(
+            id=10,
+            book_id=100,
+            reads=[UserBookRead(id=20, progress_pages=10)],
+        )
+        changes = [
+            self._change("rating", 4.5),
+            self._change("progress", 50),
+        ]
+
+        outcome = apply_sync_to_book(api, 100, 10, changes, {}, current)
+
+        assert outcome.applied == 1
+        assert outcome.failed == 1
+        assert outcome.errors == ["Reading data: read failed"]
+        api.update_user_book.assert_called_once_with(10, rating=4.5)
+
+    def test_add_without_status_is_rejected(self):
+        """The service never fabricates an unpreviewed Want-to-Read status."""
+        from unittest.mock import Mock
+
+        api = Mock()
+        changes = [self._change("rating", 4.5, user_book_id=None)]
+
+        outcome = apply_sync_to_book(api, 100, None, changes, {})
+
+        assert outcome.applied == 0
+        assert outcome.failed == 1
+        assert outcome.errors == ["Add to library: no mapped reading status"]
+        api.add_book_to_library.assert_not_called()
+
+    def test_add_failure_marks_user_and_read_changes_failed(self):
+        """Read changes cannot proceed when adding the library entry fails."""
+        from unittest.mock import Mock
+
+        api = Mock()
+        api.add_book_to_library.side_effect = RuntimeError("add failed")
+        changes = [
+            self._change("status", 3, user_book_id=None),
+            self._change("progress", 50, user_book_id=None),
+        ]
+
+        outcome = apply_sync_to_book(api, 100, None, changes, {})
+
+        assert outcome.applied == 0
+        assert outcome.failed == 2
+        assert outcome.errors == ["Add to library: add failed"]
+        api.insert_user_book_read.assert_not_called()
+
+
 class TestNewBookAction:
     """Tests for NewBookAction dataclass."""
 
@@ -365,6 +452,14 @@ class TestGetStatusFromCalibre:
         """Test unknown status value."""
         assert get_status_from_calibre("Unknown Status", {}) is None
 
+    def test_ambiguous_mapped_status(self):
+        """A mapped value that collides with another default is not guessed."""
+        assert get_status_from_calibre("Read", {"1": "Read"}) is None
+
+    def test_ambiguous_custom_status(self):
+        """Duplicate custom values are not resolved by insertion order."""
+        assert get_status_from_calibre("Done", {"1": "Done", "3": "Done"}) is None
+
 
 class TestExtractDate:
     """Tests for extract_date function."""
@@ -388,6 +483,75 @@ class TestExtractDate:
     def test_empty_string(self):
         """Test empty string input."""
         assert extract_date("") is None
+
+
+class TestBuildSyncFromValues:
+    def test_disabled_fields_are_not_written_for_new_books(self):
+        from hardcover_sync.models import UserBookRead
+
+        user_book = UserBook(
+            id=1,
+            book_id=100,
+            status_id=3,
+            rating=4.5,
+            review="Review",
+            reads=[
+                UserBookRead(
+                    id=2,
+                    progress_pages=50,
+                    progress=25.0,
+                    started_at="2024-01-01",
+                    finished_at="2024-01-02",
+                )
+            ],
+        )
+        prefs = {
+            "status_column": "#status",
+            "rating_column": "rating",
+            "progress_column": "#progress",
+            "progress_percent_column": "#percent",
+            "date_started_column": "#started",
+            "date_read_column": "#finished",
+            "is_read_column": "#is_read",
+            "review_column": "#review",
+            "sync_statuses": [1, 2],
+            "sync_rating": False,
+            "sync_progress": False,
+            "sync_dates": False,
+            "sync_review": False,
+        }
+
+        assert build_sync_from_values(user_book, prefs) == []
+
+    def test_enabled_fields_build_native_column_writes(self):
+        from hardcover_sync.models import UserBookRead
+
+        user_book = UserBook(
+            id=1,
+            book_id=100,
+            status_id=3,
+            rating=4.5,
+            review="Review",
+            reads=[UserBookRead(id=2, progress_pages=50, started_at="2024-01-01T10:00:00")],
+        )
+        prefs = {
+            "status_column": "#status",
+            "rating_column": "rating",
+            "progress_column": "#progress",
+            "date_started_column": "#started",
+            "is_read_column": "#is_read",
+            "review_column": "#review",
+            "status_mappings": {"3": "Finished"},
+        }
+
+        assert build_sync_from_values(user_book, prefs) == [
+            ("#status", "Finished"),
+            ("rating", "9"),
+            ("#progress", 50),
+            ("#started", "2024-01-01"),
+            ("#is_read", True),
+            ("#review", "Review"),
+        ]
 
 
 class TestFindSyncFromChanges:
@@ -430,6 +594,25 @@ class TestFindSyncFromChanges:
         assert changes[0].field == "status"
         assert changes[0].old_value == "Want to Read"
         assert changes[0].new_value == "Read"
+
+    def test_status_filter_skips_excluded_status(self):
+        """The explicit status filter applies to sync-from changes."""
+        hc_books = [self.create_user_book(100, status_id=3)]
+        prefs = {
+            "status_column": "status_col",
+            "status_mappings": {},
+            "sync_statuses": [1, 2],
+        }
+
+        changes = find_sync_from_changes(
+            hc_books,
+            {"test-book": 1},
+            lambda calibre_id, col: "Want to Read",
+            lambda calibre_id: "Test Book",
+            prefs,
+        )
+
+        assert changes == []
 
     def test_rating_change(self):
         """Test detecting rating changes."""
@@ -1107,6 +1290,23 @@ class TestFindSyncFromChangesIsRead:
         assert is_read_changes[0].old_value == "No"
         assert is_read_changes[0].new_value == "Yes"
 
+    def test_is_read_skipped_when_hardcover_status_is_excluded(self):
+        hc_books = [self.create_user_book_with_reads(100, status_id=3)]
+        prefs = {
+            "is_read_column": "is_read_col",
+            "sync_statuses": [1, 2],
+        }
+
+        changes = find_sync_from_changes(
+            hc_books,
+            {"test-book": 1},
+            lambda calibre_id, col: False,
+            lambda calibre_id: "Test Book",
+            prefs,
+        )
+
+        assert [change for change in changes if change.field == "is_read"] == []
+
     def test_is_read_false_when_status_is_not_read(self):
         """Test is_read becomes False when book status is not 'Read'."""
         # Book with status "Currently Reading" (status_id=2)
@@ -1430,6 +1630,7 @@ class TestSyncToResult:
         assert result.linked_count == 0
         assert result.not_linked_count == 0
         assert result.api_errors == 0
+        assert result.api_error_messages == []
         assert result.books_with_changes == 0
 
     def test_mutable_defaults_are_independent(self):
@@ -1603,6 +1804,20 @@ class TestFindSyncToChanges:
         assert status_changes[0].new_value == "Currently Reading"
         assert status_changes[0].old_value == "Want to Read"
 
+    def test_status_filter_skips_excluded_status(self):
+        """The explicit status filter applies to sync-to changes."""
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {},
+                "sync_statuses": [1, 3],
+            },
+            calibre_values={(1, "#status"): "Currently Reading"},
+            user_books={100: self._make_user_book(status_id=1)},
+        )
+
+        assert [change for change in result.changes if change.field == "status"] == []
+
     def test_status_no_change_when_equal(self):
         """No change when Calibre status matches Hardcover."""
         hc_user_book = self._make_user_book(status_id=3)  # Read
@@ -1661,6 +1876,19 @@ class TestFindSyncToChanges:
         status_changes = [c for c in result.changes if c.field == "status"]
         assert len(status_changes) == 0
 
+    def test_ambiguous_status_is_reported(self):
+        result = self._call(
+            prefs={
+                "status_column": "#status",
+                "status_mappings": {"1": "Read"},
+            },
+            calibre_values={(1, "#status"): "Read"},
+            user_books={100: self._make_user_book(status_id=2)},
+        )
+
+        assert [change for change in result.changes if change.field == "status"] == []
+        assert result.warnings == ["Test Book: skipped ambiguous status value 'Read'"]
+
     def test_status_not_in_library_old_value(self):
         """When no user_book on HC, old_value shows '(not in library)'."""
         result = self._call(
@@ -1708,6 +1936,16 @@ class TestFindSyncToChanges:
         rating_changes = [c for c in result.changes if c.field == "rating"]
         assert len(rating_changes) == 0
 
+    def test_invalid_rating_is_reported_and_skipped(self):
+        result = self._call(
+            prefs={"rating_column": "rating"},
+            calibre_values={(1, "rating"): "not a rating"},
+            user_books={100: self._make_user_book(rating=4.0)},
+        )
+
+        assert [change for change in result.changes if change.field == "rating"] == []
+        assert result.warnings == ["Test Book: skipped rating because it is not numeric"]
+
     def test_rating_none_calibre_skipped(self):
         """No rating change when Calibre value is None."""
         hc_user_book = self._make_user_book(rating=4.0)
@@ -1727,11 +1965,11 @@ class TestFindSyncToChanges:
         """Rating when no HC user_book uses None as current."""
         result = self._call(
             prefs={
-                "status_column": "",
+                "status_column": "#status",
                 "status_mappings": {},
                 "rating_column": "rating",
             },
-            calibre_values={(1, "rating"): 8},  # 4.0 on HC scale
+            calibre_values={(1, "#status"): "Read", (1, "rating"): 8},
             user_books={},
         )
         rating_changes = [c for c in result.changes if c.field == "rating"]
@@ -1777,11 +2015,11 @@ class TestFindSyncToChanges:
         """Old value shows '(empty)' when no HC progress."""
         result = self._call(
             prefs={
-                "status_column": "",
+                "status_column": "#status",
                 "status_mappings": {},
                 "progress_column": "#pages",
             },
-            calibre_values={(1, "#pages"): 50},
+            calibre_values={(1, "#status"): "Read", (1, "#pages"): 50},
             user_books={},
         )
         progress_changes = [c for c in result.changes if c.field == "progress"]
@@ -1826,11 +2064,11 @@ class TestFindSyncToChanges:
         """Old value shows '(empty)' when no HC progress percent."""
         result = self._call(
             prefs={
-                "status_column": "",
+                "status_column": "#status",
                 "status_mappings": {},
                 "progress_percent_column": "#pct",
             },
-            calibre_values={(1, "#pct"): 25.0},
+            calibre_values={(1, "#status"): "Read", (1, "#pct"): 25.0},
             user_books={},
         )
         pct_changes = [c for c in result.changes if c.field == "progress_percent"]
@@ -1916,6 +2154,7 @@ class TestFindSyncToChanges:
             resolved_books={"100": book},
             prefs={"progress_percent_column": "#pct", "status_mappings": {}},
             calibre_values={(1, "#pct"): 100.0},
+            user_books={100: self._make_user_book(status_id=1)},
         )
 
         change = next(c for c in result.changes if c.field == "progress_percent")
@@ -2012,6 +2251,7 @@ class TestFindSyncToChanges:
                 "status_mappings": {},
             },
             calibre_values={(1, "#pages"): 123, (1, "#pct"): 75.0},
+            user_books={100: self._make_user_book(status_id=1)},
         )
 
         assert [(change.field, change.api_value) for change in result.changes] == [
@@ -2065,11 +2305,11 @@ class TestFindSyncToChanges:
         """Old value shows '(empty)' when no HC start date."""
         result = self._call(
             prefs={
-                "status_column": "",
+                "status_column": "#status",
                 "status_mappings": {},
                 "date_started_column": "#started",
             },
-            calibre_values={(1, "#started"): "2024-03-01"},
+            calibre_values={(1, "#status"): "Read", (1, "#started"): "2024-03-01"},
             user_books={},
         )
         date_changes = [c for c in result.changes if c.field == "date_started"]
@@ -2115,11 +2355,11 @@ class TestFindSyncToChanges:
         """Old value shows '(empty)' when no HC finish date."""
         result = self._call(
             prefs={
-                "status_column": "",
+                "status_column": "#status",
                 "status_mappings": {},
                 "date_read_column": "#finished",
             },
-            calibre_values={(1, "#finished"): "2024-06-20"},
+            calibre_values={(1, "#status"): "Read", (1, "#finished"): "2024-06-20"},
             user_books={},
         )
         date_changes = [c for c in result.changes if c.field == "date_read"]
@@ -2158,6 +2398,25 @@ class TestFindSyncToChanges:
         )
         review_changes = [c for c in result.changes if c.field == "review"]
         assert len(review_changes) == 0
+
+    def test_html_review_equal_to_hardcover_text_is_unchanged(self):
+        result = self._call(
+            prefs={"review_column": "#review"},
+            calibre_values={(1, "#review"): "<p>Great <b>book</b></p>"},
+            user_books={100: self._make_user_book(review="Great book")},
+        )
+
+        assert [change for change in result.changes if change.field == "review"] == []
+
+    def test_html_review_is_converted_before_upload(self):
+        result = self._call(
+            prefs={"review_column": "#review"},
+            calibre_values={(1, "#review"): "<p>Great <b>book</b></p>"},
+            user_books={100: self._make_user_book(review="Old")},
+        )
+
+        review_change = next(change for change in result.changes if change.field == "review")
+        assert review_change.api_value == "Great book"
 
     def test_review_empty_calibre_skipped(self):
         """No review change when Calibre has no review."""
@@ -2238,8 +2497,54 @@ class TestFindSyncToChanges:
         assert result.books_with_changes == 0
         assert len(result.changes) == 0
 
-    def test_api_error_during_user_book_fetch(self):
-        """API errors during get_user_book are counted."""
+    def test_disabled_sync_options_suppress_all_optional_fields(self):
+        """Disabled field options are honored when syncing to Hardcover."""
+        hc_user_book = self._make_user_book(
+            rating=1.0,
+            review="Old review",
+            progress_pages=10,
+            started_at="2024-01-01",
+            finished_at="2024-01-02",
+        )
+        result = self._call(
+            prefs={
+                "rating_column": "rating",
+                "progress_column": "#progress",
+                "date_started_column": "#started",
+                "date_read_column": "#finished",
+                "review_column": "#review",
+                "sync_rating": False,
+                "sync_progress": False,
+                "sync_dates": False,
+                "sync_review": False,
+            },
+            calibre_values={
+                (1, "rating"): 10,
+                (1, "#progress"): 200,
+                (1, "#started"): "2025-01-01",
+                (1, "#finished"): "2025-01-02",
+                (1, "#review"): "New review",
+            },
+            user_books={100: hc_user_book},
+        )
+        assert result.changes == []
+        assert result.warnings == []
+        assert result.books_with_changes == 0
+
+    def test_book_absent_from_library_requires_mapped_status(self):
+        result = self._call(
+            prefs={"rating_column": "rating"},
+            calibre_values={(1, "rating"): 8},
+            user_books={},
+        )
+
+        assert result.changes == []
+        assert result.warnings == [
+            "Test Book: skipped changes because adding a book requires a mapped status"
+        ]
+
+    def test_api_error_during_user_book_fetch_skips_book(self):
+        """A failed lookup must not be treated as a book absent from the library."""
 
         def failing_get_user_book(hc_book_id):
             raise RuntimeError("API timeout")
@@ -2247,14 +2552,37 @@ class TestFindSyncToChanges:
         result = find_sync_to_changes(
             book_ids=[1],
             get_identifiers=lambda bid: {"hardcover": "100"},
-            get_calibre_value=lambda bid, col: None,
+            get_calibre_value=lambda bid, col: "Read",
             get_calibre_title=lambda bid: "Test",
             resolve_book=lambda s: self._make_book(),
             get_user_book=failing_get_user_book,
-            prefs={"status_column": "", "status_mappings": {}},
+            prefs={"status_column": "#status", "status_mappings": {}},
         )
         assert result.api_errors == 1
-        assert result.linked_count == 1
+        assert result.api_error_messages == ["Test: API timeout"]
+        assert result.linked_count == 0
+        assert result.changes == []
+
+    def test_api_error_during_book_resolution_skips_book(self):
+        """A failed identifier resolution is reported without aborting the scan."""
+
+        def failing_resolve_book(slug):
+            raise RuntimeError("API unavailable")
+
+        result = find_sync_to_changes(
+            book_ids=[1],
+            get_identifiers=lambda bid: {"hardcover": "test-book"},
+            get_calibre_value=lambda bid, col: "Read",
+            get_calibre_title=lambda bid: "Test",
+            resolve_book=failing_resolve_book,
+            get_user_book=lambda book_id: None,
+            prefs={"status_column": "#status", "status_mappings": {}},
+        )
+        assert result.api_errors == 1
+        assert result.api_error_messages == ["Test: API unavailable"]
+        assert result.linked_count == 0
+        assert result.not_linked_count == 0
+        assert result.changes == []
 
     def test_on_progress_callback(self):
         """on_progress callback is called for each book."""

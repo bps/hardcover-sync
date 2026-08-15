@@ -6,6 +6,7 @@ This dialog fetches the user's Hardcover library and syncs data to Calibre.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 # Qt imports - only available in Calibre's runtime environment
@@ -26,17 +27,20 @@ from qt.core import (
 )
 
 from ..api import HardcoverAPI
-from ..config import READING_STATUSES, SYNCABLE_COLUMNS, get_column_mappings, get_unmapped_columns
+from ..config import SYNCABLE_COLUMNS, get_column_mappings, get_unmapped_columns
 from ..models import UserBook
+from ..services import OperationGuard, apply_sync_from_batch, fetch_all_user_books
 from ..sync import (
     NewBookAction,
     SyncChange,
+    build_sync_from_values,
     coerce_value_for_column,
-    convert_rating_to_calibre,
     find_new_books,
     find_sync_from_changes,
 )
 from .base import HardcoverDialogBase
+
+logger = logging.getLogger(__name__)
 
 
 class SyncFromHardcoverDialog(HardcoverDialogBase):
@@ -60,6 +64,7 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
         self.changes: list[SyncChange] = []
         self.new_books: list[NewBookAction] = []
         self.hardcover_books: list[UserBook] = []
+        self._operation_guard = OperationGuard()
 
         # Determine sync scope: if a subset of books is selected, scope to those
         all_book_ids = self.db.all_book_ids()
@@ -240,8 +245,12 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
 
     def _on_fetch(self) -> None:
         """Fetch the user's Hardcover library."""
+        if not self._operation_guard.start():
+            return
+
         api = self._get_api()
         if not api:
+            self._operation_guard.finish()
             return
 
         self.fetch_button.setEnabled(False)
@@ -347,6 +356,7 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
             self.status_label.setText(f"Error fetching library: {e}")
             self.progress_bar.setVisible(False)
         finally:
+            self._operation_guard.finish()
             self.fetch_button.setEnabled(True)
 
     def _fetch_all_books(self, api: HardcoverAPI) -> list[UserBook]:
@@ -355,25 +365,10 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
         Deduplicates by book_id, keeping the most recently updated entry
         (the API returns results ordered by updated_at desc).
         """
-        all_books: list[UserBook] = []
-        seen_book_ids: set[int] = set()
-        offset = 0
-        limit = 100
-
-        while True:
-            batch = api.get_user_books(limit=limit, offset=offset)
-            for ub in batch:
-                if ub.book_id not in seen_book_ids:
-                    seen_book_ids.add(ub.book_id)
-                    all_books.append(ub)
-
-            if len(batch) < limit:
-                break
-
-            offset += limit
-            QApplication.processEvents()
-
-        return all_books
+        return fetch_all_user_books(
+            lambda limit, offset: api.get_user_books(limit=limit, offset=offset),
+            on_page=QApplication.processEvents,
+        )
 
     def _fetch_books_by_slugs(self, api: HardcoverAPI, slugs: list[str]) -> list[UserBook]:
         """Fetch specific books from the user's Hardcover library by slugs."""
@@ -681,6 +676,17 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
 
     def _on_apply(self) -> None:
         """Apply the selected changes and create new books."""
+        if not self._operation_guard.start():
+            return
+        try:
+            self._apply_selected_changes()
+        finally:
+            self._operation_guard.finish()
+            self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
+            self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setEnabled(True)
+
+    def _apply_selected_changes(self) -> None:
+        """Run the selected sync after the operation guard is acquired."""
         changes_to_apply = [c for c in self.changes if c.apply]
         new_books_to_create = [b for b in self.new_books if b.apply]
 
@@ -697,44 +703,25 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
         self.progress_bar.setValue(0)
         QApplication.processEvents()
 
-        applied_changes = 0
-        created_books = 0
-        skipped = 0
-        errors = []
         progress = 0
 
-        # Create new books first
-        for new_book in new_books_to_create:
-            try:
-                calibre_id = self._create_calibre_book(new_book)
-                if calibre_id:
-                    created_books += 1
-                else:
-                    skipped += 1
-                    errors.append(f"{new_book.title}: Failed to create book")
-            except Exception as e:
-                errors.append(f"{new_book.title}: {e}")
-
+        def on_progress() -> None:
+            nonlocal progress
             progress += 1
             self.progress_bar.setValue(progress)
             QApplication.processEvents()
 
-        # Apply changes to existing books
-        for change in changes_to_apply:
-            try:
-                success, error_msg = self._apply_change(change)
-                if success:
-                    applied_changes += 1
-                else:
-                    skipped += 1
-                    if error_msg:
-                        errors.append(f"{change.calibre_title}: {error_msg}")
-            except Exception as e:
-                errors.append(f"{change.calibre_title}: {e}")
-
-            progress += 1
-            self.progress_bar.setValue(progress)
-            QApplication.processEvents()
+        outcome = apply_sync_from_batch(
+            changes_to_apply,
+            new_books_to_create,
+            apply_change=self._apply_change,
+            create_book=self._create_calibre_book,
+            on_progress=on_progress,
+        )
+        applied_changes = outcome.applied_changes
+        created_books = outcome.created_books
+        skipped = outcome.skipped
+        errors = outcome.errors
 
         self.progress_bar.setVisible(False)
 
@@ -867,7 +854,7 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
                 if pub_date:
                     mi.pubdate = pub_date
             except (ValueError, TypeError):
-                pass  # Ignore invalid dates
+                logger.debug("Ignoring invalid release date: %r", new_book.release_date)
 
         # Add the book to Calibre
         book_id = self.db.create_book_entry(mi)
@@ -889,81 +876,13 @@ class SyncFromHardcoverDialog(HardcoverDialogBase):
         return book_id
 
     def _apply_user_book_data(self, book_id: int, user_book: UserBook) -> None:
-        """
-        Apply Hardcover user book data to a Calibre book.
-
-        This sets status, rating, progress, dates, and review based on
-        the user's Hardcover data and column mappings.
-        """
-        from datetime import datetime
-
-        # Get column mappings
-        col = get_column_mappings(self.prefs)
-        status_col = col.get("status", "")
-        rating_col = col.get("rating", "")
-        progress_col = col.get("progress", "")
-        progress_percent_col = col.get("progress_percent", "")
-        date_started_col = col.get("date_started", "")
-        date_read_col = col.get("date_read", "")
-        is_read_col = col.get("is_read", "")
-        review_col = col.get("review", "")
-
-        # Get status mappings
-        status_mappings = self.prefs.get("status_mappings", {})
-
-        # Apply status
-        if status_col and user_book.status_id:
-            status_value = status_mappings.get(
-                str(user_book.status_id), READING_STATUSES.get(user_book.status_id, "")
-            )
-            if status_value:
-                self._set_column_value(book_id, status_col, status_value)
-
-        # Apply rating
-        if rating_col and user_book.rating is not None:
-            col_info = self._get_custom_column_metadata(rating_col)
-            rating_value_str, _ = convert_rating_to_calibre(user_book.rating, rating_col, col_info)
-            # Convert string back to appropriate type for Calibre
-            if rating_col == "rating" or (col_info and col_info.get("datatype") == "rating"):
-                rating_value = int(rating_value_str)
-            else:
-                rating_value = float(rating_value_str)
-            self._set_column_value(book_id, rating_col, rating_value)
-
-        # Apply progress (from latest read)
-        current_progress = user_book.current_progress_pages
-        if progress_col and current_progress is not None:
-            self._set_column_value(book_id, progress_col, current_progress)
-
-        current_progress_pct = user_book.current_progress_percent
-        if progress_percent_col and current_progress_pct is not None:
-            self._set_column_value(book_id, progress_percent_col, round(current_progress_pct, 1))
-
-        # Apply date started (from latest read)
-        latest_started = user_book.latest_started_at
-        if date_started_col and latest_started:
-            try:
-                date_value = datetime.fromisoformat(latest_started[:10])
-                self._set_column_value(book_id, date_started_col, date_value)
-            except (ValueError, TypeError):
-                pass
-
-        # Apply date read (from latest read)
-        latest_finished = user_book.latest_finished_at
-        if date_read_col and latest_finished:
-            try:
-                date_value = datetime.fromisoformat(latest_finished[:10])
-                self._set_column_value(book_id, date_read_col, date_value)
-            except (ValueError, TypeError):
-                pass
-
-        # Apply is_read boolean from Hardcover status
-        if is_read_col:
-            self._set_column_value(book_id, is_read_col, user_book.status_id == 3)
-
-        # Apply review
-        if review_col and user_book.review:
-            self._set_column_value(book_id, review_col, user_book.review)
+        """Apply enabled Hardcover fields to a newly created Calibre book."""
+        for column, value in build_sync_from_values(
+            user_book,
+            self.prefs,
+            self._get_custom_column_metadata,
+        ):
+            self._set_column_value(book_id, column, value)
 
     def _set_column_value(self, book_id: int, column: str, value: Any) -> None:
         """Set a column value with appropriate type conversion."""

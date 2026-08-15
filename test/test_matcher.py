@@ -177,12 +177,19 @@ class TestMatchByISBN:
         mock_get_cache.return_value = mock_cache
 
         mock_api = MagicMock()
-        mock_api.get_book_by_id.return_value = Book(id=123, title="Cached Book", slug="cached")
+        mock_api.get_book_by_id.return_value = Book(
+            id=123,
+            title="Cached Book",
+            slug="cached",
+            editions=[Edition(id=999), Edition(id=456)],
+        )
 
         result = match_by_isbn(mock_api, "9780123456789")
 
         assert result.book is not None
         assert result.book.id == 123
+        assert result.book.editions is not None
+        assert result.book.editions[0].id == 456
         assert result.match_type == "isbn"
         assert result.confidence == 1.0
 
