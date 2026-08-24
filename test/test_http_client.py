@@ -3,7 +3,7 @@
 import io
 import json
 from urllib.error import HTTPError
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -27,9 +27,9 @@ def json_response(payload):
     return io.BytesIO(json.dumps(payload).encode("utf-8"))
 
 
-def http_error(status, body):
+def http_error(status, body, headers=None):
     """Create an HTTP error with a readable response body."""
-    return HTTPError(API_URL, status, "error", {}, io.BytesIO(body))
+    return HTTPError(API_URL, status, "error", headers or {}, io.BytesIO(body))
 
 
 class TestHardcoverHTTPClient:
@@ -71,17 +71,50 @@ class TestHardcoverHTTPClient:
         with pytest.raises(GraphQLResponseError, match="first error; second error"):
             client.execute("query Broken { broken }")
 
-    def test_execute_preserves_http_status_on_graphql_error(self):
+    @patch("hardcover_sync.api.time.sleep")
+    def test_execute_retries_http_rate_limit(self, sleep):
         client, opener = make_client()
-        opener.open.side_effect = http_error(
-            429,
-            json.dumps({"errors": [{"message": "slow down"}]}).encode("utf-8"),
+        opener.open.side_effect = [
+            http_error(429, b"rate limited", {"Retry-After": "3"}),
+            json_response({"data": {"me": {"id": 1}}}),
+        ]
+
+        result = client.execute("query Me { me { id } }")
+
+        assert result == {"me": {"id": 1}}
+        assert opener.open.call_count == 2
+        assert sleep.call_args_list == [call(3.0)]
+        first_request, second_request = [args.args[0] for args in opener.open.call_args_list]
+        assert first_request is not second_request
+        assert first_request.data == second_request.data
+        assert first_request.get_header("Authorization") == second_request.get_header(
+            "Authorization"
         )
 
-        with pytest.raises(GraphQLResponseError, match="slow down") as exc_info:
+    @patch("hardcover_sync.api.time.sleep")
+    def test_execute_preserves_http_status_after_rate_limit_retries(self, sleep):
+        client, opener = make_client()
+        error_body = json.dumps(
+            {"error": "Too Many Requests", "message": "Try again in 1 seconds."}
+        ).encode("utf-8")
+        opener.open.side_effect = [http_error(429, error_body) for _ in range(3)]
+
+        with pytest.raises(GraphQLResponseError, match="Try again in 1 seconds") as exc_info:
             client.execute("query Me { me { id } }")
 
         assert exc_info.value.status == 429
+        assert opener.open.call_count == 3
+        assert sleep.call_args_list == [call(1.0), call(2.0)]
+
+    @pytest.mark.parametrize(
+        ("retry_after", "expected"),
+        [(None, 2.0), ("not-a-delay", 2.0), ("nan", 2.0), ("0", 1.0), ("30", 10.0)],
+    )
+    def test_retry_delay_is_bounded(self, retry_after, expected):
+        headers = {"Retry-After": retry_after} if retry_after is not None else None
+        error = http_error(429, b"rate limited", headers)
+
+        assert HardcoverHTTPClient._retry_delay(error, retry_number=1) == expected
 
     def test_execute_refuses_redirect_with_json_body(self):
         client, opener = make_client()
@@ -100,10 +133,24 @@ class TestHardcoverHTTPClient:
             json.dumps({"message": "Unauthorized"}).encode("utf-8"),
         )
 
-        with pytest.raises(GraphQLResponseError) as exc_info:
+        with pytest.raises(GraphQLResponseError, match="Unauthorized") as exc_info:
             client.execute("query Me { me { id } }")
 
         assert exc_info.value.status == 401
+        assert opener.open.call_count == 1
+
+    def test_execute_rejects_data_from_http_error(self):
+        client, opener = make_client()
+        opener.open.side_effect = http_error(
+            500,
+            json.dumps({"data": {"me": {"id": 1}}}).encode("utf-8"),
+        )
+
+        with pytest.raises(GraphQLResponseError, match="HTTP 500") as exc_info:
+            client.execute("query Me { me { id } }")
+
+        assert exc_info.value.status == 500
+        assert opener.open.call_count == 1
 
     def test_execute_reraises_http_error_with_non_json_body(self):
         client, opener = make_client()
@@ -114,6 +161,7 @@ class TestHardcoverHTTPClient:
             client.execute("query Me { me { id } }")
 
         assert exc_info.value is error
+        assert opener.open.call_count == 1
 
     def test_execute_rejects_invalid_json(self):
         client, opener = make_client()
