@@ -6,6 +6,8 @@ the Hardcover.app GraphQL API.
 """
 
 import json
+import math
+import time
 from datetime import date
 from typing import Any
 from urllib.error import HTTPError
@@ -28,6 +30,8 @@ from .models import (  # noqa: E402
 API_URL = "https://api.hardcover.app/v1/graphql"
 DEFAULT_TIMEOUT = 30  # seconds
 _MAX_ERROR_MESSAGE_LENGTH = 500
+_MAX_RATE_LIMIT_RETRIES = 2
+_MAX_RETRY_DELAY_SECONDS = 10.0
 
 
 class GraphQLResponseError(Exception):
@@ -76,8 +80,25 @@ class HardcoverHTTPClient:
 
         data = payload.get("data")
         if not isinstance(data, dict):
+            message = payload.get("message") or payload.get("error")
+            if isinstance(message, str):
+                raise GraphQLResponseError(message, status)
             raise GraphQLResponseError("GraphQL response did not contain data", status)
+        if status is not None and status >= 400:
+            raise GraphQLResponseError(f"Request failed: HTTP {status}", status)
         return data
+
+    @staticmethod
+    def _retry_delay(error: HTTPError, retry_number: int) -> float:
+        retry_after = error.headers.get("Retry-After") if error.headers else None
+        if retry_after is not None:
+            try:
+                delay = float(retry_after)
+                if math.isfinite(delay):
+                    return min(max(delay, 1.0), _MAX_RETRY_DELAY_SECONDS)
+            except ValueError:
+                pass
+        return min(2.0**retry_number, _MAX_RETRY_DELAY_SECONDS)
 
     def execute(
         self,
@@ -88,30 +109,42 @@ class HardcoverHTTPClient:
         if variables is not None:
             payload["variables"] = variables
 
-        request = Request(  # noqa: S310 - API_URL is a fixed HTTPS endpoint
-            API_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-                "User-Agent": "hardcover-sync-calibre-plugin",
-            },
-            method="POST",
-        )
+        request_body = json.dumps(payload).encode("utf-8")
+        response_body = b""
+        for retry_number in range(_MAX_RATE_LIMIT_RETRIES + 1):
+            # Request objects may be mutated by urllib handlers, so rebuild on retry.
+            request = Request(  # noqa: S310 - API_URL is a fixed HTTPS endpoint
+                API_URL,
+                data=request_body,
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {self.token}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "hardcover-sync-calibre-plugin",
+                },
+                method="POST",
+            )
 
-        try:
-            with self.opener.open(request, timeout=self.timeout) as response:  # noqa: S310
-                response_body = response.read()
-        except HTTPError as error:
-            if error.code < 400:
-                raise error from None
-            response_body = error.read()
             try:
-                error_payload = json.loads(response_body)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                raise error from None
-            return self._extract_data(error_payload, status=error.code)
+                with self.opener.open(request, timeout=self.timeout) as response:  # noqa: S310
+                    response_body = response.read()
+                break
+            except HTTPError as error:
+                if error.code < 400:
+                    raise error from None
+                if error.code == 429 and retry_number < _MAX_RATE_LIMIT_RETRIES:
+                    delay = self._retry_delay(error, retry_number)
+                    error.close()
+                    time.sleep(delay)
+                    continue
+
+                response_body = error.read()
+                error.close()
+                try:
+                    error_payload = json.loads(response_body)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    raise error from None
+                return self._extract_data(error_payload, status=error.code)
 
         try:
             response_payload = json.loads(response_body)
@@ -195,18 +228,22 @@ class HardcoverAPI:
             return self.client.execute(query, variables)
         except GraphQLResponseError as e:
             error_msg = str(e)
-            if e.status in {401, 403} or any(
+            if e.status in {401, 403}:
+                raise AuthenticationError("Invalid API token") from e
+            if e.status == 429:
+                raise RateLimitError("Rate limit exceeded; please try again later") from e
+            if e.status is None and any(
                 text in error_msg.lower() for text in ("unauthorized", "invalid")
             ):
                 raise AuthenticationError("Invalid API token") from e
-            if e.status == 429 or "rate limit" in error_msg.lower():
-                raise RateLimitError("Rate limit exceeded (60 requests/minute)") from e
+            if e.status is None and "rate limit" in error_msg.lower():
+                raise RateLimitError("Rate limit exceeded; please try again later") from e
             raise HardcoverAPIError(f"API error: {error_msg}") from e
         except HTTPError as e:
             if e.code in {401, 403}:
                 raise AuthenticationError("Invalid API token") from e
             if e.code == 429:
-                raise RateLimitError("Rate limit exceeded (60 requests/minute)") from e
+                raise RateLimitError("Rate limit exceeded; please try again later") from e
             raise HardcoverAPIError(f"Request failed: HTTP {e.code}") from e
         except Exception as e:
             raise HardcoverAPIError(f"Request failed: {e}") from e

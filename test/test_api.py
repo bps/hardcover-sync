@@ -536,8 +536,10 @@ class TestErrorHandling:
             api.get_me()
 
     def test_http_rate_limit_error(self, api, mock_client):
-        """Test rate-limit classification from an HTTP status."""
-        mock_client.return_value.execute.side_effect = GraphQLResponseError("slow down", status=429)
+        """Test that HTTP status takes precedence over ambiguous error text."""
+        mock_client.return_value.execute.side_effect = GraphQLResponseError(
+            "invalid request: slow down", status=429
+        )
 
         with pytest.raises(RateLimitError):
             api.get_me()
