@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-08-31
+
+### Bug Fixes
+
+- Update deprecated mise venv setting
+- Retry API rate limits
+
 ## [0.5.0] - 2026-08-15
 
 ### Bug Fixes
