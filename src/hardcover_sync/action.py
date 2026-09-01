@@ -7,19 +7,46 @@ This module defines the toolbar button and menu structure.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 # Calibre imports - only available in Calibre's runtime environment
 from calibre.gui2.actions import InterfaceAction
-from qt.core import QMenu, QToolButton
+from qt.core import QMenu, QTimer, QToolButton
 
+from .auth import PAT_CREATION_URL, is_legacy_jwt
 from .config import MENU_STATUSES, READING_STATUSES, get_plugin_prefs
 
 if TYPE_CHECKING:
     from .api import HardcoverAPI
 
 logger = logging.getLogger(__name__)
+
+
+def offer_pat_migration(gui: Any, show_configuration: Callable[[], None]) -> None:
+    """Offer legacy JWT users the PAT migration link once."""
+    prefs = get_plugin_prefs()
+    token = prefs.get("api_token", "")
+    if prefs.get("pat_migration_prompt_shown", False) or not is_legacy_jwt(token):
+        return
+
+    # Persist before opening the dialog so an interrupted prompt cannot
+    # be shown again the next time the menu opens.
+    prefs["pat_migration_prompt_shown"] = True
+
+    from calibre.gui2 import open_url, question_dialog
+    from qt.core import QUrl
+
+    update_now = question_dialog(
+        gui,
+        "Update Hardcover API Token",
+        "Hardcover now uses personal access tokens instead of legacy JWTs. "
+        "Would you like to create a token with the permissions Hardcover Sync needs?",
+    )
+    if update_now:
+        open_url(QUrl(PAT_CREATION_URL))
+        show_configuration()
 
 
 def update_calibre_status(db: Any, book_id: int, status_id: int, prefs: Any) -> None:
@@ -85,6 +112,11 @@ class HardcoverSyncAction(InterfaceAction):
         """Called when menu is about to be shown."""
         if self._menu_needs_rebuild:
             self.rebuild_menu()
+        QTimer.singleShot(0, self._prompt_for_pat_if_needed)
+
+    def _prompt_for_pat_if_needed(self) -> None:
+        """Run the one-time legacy-token migration prompt."""
+        offer_pat_migration(self.gui, self.show_configuration)
 
     def mark_menu_for_rebuild(self) -> None:
         """Mark the menu to be rebuilt on next show."""

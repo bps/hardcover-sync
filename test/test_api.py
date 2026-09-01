@@ -13,6 +13,7 @@ from hardcover_sync.api import (
     HardcoverAPI,
     HardcoverAPIError,
     GraphQLResponseError,
+    InsufficientScopeError,
     RateLimitError,
     UserBook,
     UserBookRead,
@@ -108,6 +109,105 @@ class TestValidateToken:
 # =============================================================================
 # Book Lookup Tests
 # =============================================================================
+
+
+class TestPermissionValidation:
+    """Tests for PAT permission validation."""
+
+    @staticmethod
+    def permission_schema(query_fields, mutation_fields):
+        return {
+            "__schema": {
+                "queryType": {"fields": [{"name": name} for name in query_fields]},
+                "mutationType": {"fields": [{"name": name} for name in mutation_fields]},
+            }
+        }
+
+    @pytest.fixture
+    def all_permissions(self):
+        return self.permission_schema(
+            ["books", "editions", "search", "user_books", "lists", "list_books", "me"],
+            [
+                "insert_user_book",
+                "update_user_book",
+                "delete_user_book",
+                "insert_user_book_read",
+                "update_user_book_read",
+                "delete_user_book_read",
+                "insert_list_book",
+                "delete_list_book",
+            ],
+        )
+
+    def test_validate_token_permissions_accepts_complete_token(
+        self, api, mock_client, all_permissions
+    ):
+        mock_client.return_value.execute.side_effect = [
+            all_permissions,
+            {},
+            {"me": {"id": 123, "username": "testuser", "name": None, "books_count": 0}},
+        ]
+
+        is_valid, user, missing = api.validate_token_permissions()
+
+        assert is_valid is True
+        assert user.username == "testuser"
+        assert missing == ()
+
+    def test_get_missing_permissions_reports_unavailable_operations(
+        self, api, mock_client, all_permissions
+    ):
+        all_permissions["__schema"]["queryType"]["fields"] = [
+            field
+            for field in all_permissions["__schema"]["queryType"]["fields"]
+            if field["name"] != "search"
+        ]
+        all_permissions["__schema"]["mutationType"]["fields"] = [
+            field
+            for field in all_permissions["__schema"]["mutationType"]["fields"]
+            if field["name"] != "insert_list_book"
+        ]
+        mock_client.return_value.execute.side_effect = [all_permissions, {}]
+
+        assert api.get_missing_permissions() == ("read:catalog", "write:lists")
+
+    def test_get_missing_permissions_checks_review_scope(self, api, mock_client, all_permissions):
+        mock_client.return_value.execute.side_effect = [
+            all_permissions,
+            GraphQLResponseError(
+                "Missing required scope",
+                status=403,
+                error_code="insufficient_scope",
+                required_scopes=("write:reviews",),
+            ),
+        ]
+
+        assert api.get_missing_permissions() == ("write:reviews",)
+
+    def test_get_missing_permissions_handles_read_only_schema(self, api, mock_client):
+        mock_client.return_value.execute.return_value = {
+            "__schema": {
+                "queryType": {"fields": [{"name": "books"}]},
+                "mutationType": None,
+            }
+        }
+
+        assert api.get_missing_permissions() == (
+            "read:catalog",
+            "read:library",
+            "read:lists",
+            "read:me:content",
+            "write:library",
+            "write:lists",
+        )
+
+    def test_get_missing_permissions_rejects_malformed_introspection(self, api, mock_client):
+        mock_client.return_value.execute.return_value = {
+            "__schema": {"queryType": {"fields": "invalid"}, "mutationType": None}
+        }
+
+        with pytest.raises(HardcoverAPIError, match="invalid schema"):
+            api.get_missing_permissions()
 
 
 class TestFindBookByISBN:
@@ -530,9 +630,49 @@ class TestErrorHandling:
 
     def test_http_authentication_error(self, api, mock_client):
         """Test authentication classification from an HTTP status."""
-        mock_client.return_value.execute.side_effect = GraphQLResponseError("forbidden", status=403)
+        mock_client.return_value.execute.side_effect = GraphQLResponseError(
+            "unauthorized", status=401
+        )
 
         with pytest.raises(AuthenticationError):
+            api.get_me()
+
+    def test_http_insufficient_scope_error(self, api, mock_client):
+        """Test missing PAT permissions are not reported as an invalid token."""
+        mock_client.return_value.execute.side_effect = GraphQLResponseError(
+            "Missing required scope",
+            status=403,
+            error_code="insufficient_scope",
+            required_scopes=("write:library",),
+        )
+
+        with pytest.raises(InsufficientScopeError) as exc_info:
+            api.get_me()
+
+        assert exc_info.value.required_scopes == ("write:library",)
+
+    def test_http_graphql_insufficient_scope_error(self, api, mock_client):
+        mock_client.return_value.execute.side_effect = GraphQLResponseError(
+            "insufficient scope: write:reviews", status=403
+        )
+
+        with pytest.raises(InsufficientScopeError):
+            api.get_me()
+
+    def test_graphql_insufficient_scope_error(self, api, mock_client):
+        mock_client.return_value.execute.side_effect = GraphQLResponseError(
+            "field 'me' not found (insufficient scope)"
+        )
+
+        with pytest.raises(InsufficientScopeError):
+            api.get_me()
+
+    def test_other_http_forbidden_error_is_generic(self, api, mock_client):
+        mock_client.return_value.execute.side_effect = GraphQLResponseError(
+            "unsupported operation", status=403, error_code="unsupported_operation"
+        )
+
+        with pytest.raises(HardcoverAPIError, match="unsupported operation"):
             api.get_me()
 
     def test_http_rate_limit_error(self, api, mock_client):

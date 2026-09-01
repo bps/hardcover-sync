@@ -139,6 +139,45 @@ class TestHardcoverHTTPClient:
         assert exc_info.value.status == 401
         assert opener.open.call_count == 1
 
+    def test_execute_preserves_insufficient_scope_details(self):
+        client, opener = make_client()
+        opener.open.side_effect = http_error(
+            403,
+            json.dumps(
+                {
+                    "error": "insufficient_scope",
+                    "error_description": "Missing required scope",
+                    "scope": "write:library write:reviews",
+                }
+            ).encode("utf-8"),
+        )
+
+        with pytest.raises(GraphQLResponseError, match="Missing required scope") as exc_info:
+            client.execute("mutation { update_user_book(id: 1, object: {}) { id } }")
+
+        assert exc_info.value.status == 403
+        assert exc_info.value.error_code == "insufficient_scope"
+        assert exc_info.value.required_scopes == ("write:library", "write:reviews")
+
+    def test_execute_preserves_scope_details_with_graphql_errors(self):
+        client, opener = make_client()
+        opener.open.side_effect = http_error(
+            403,
+            json.dumps(
+                {
+                    "error": "insufficient_scope",
+                    "scope": "write:reviews",
+                    "errors": [{"message": "insufficient scope"}],
+                }
+            ).encode("utf-8"),
+        )
+
+        with pytest.raises(GraphQLResponseError) as exc_info:
+            client.execute("mutation { update_user_book(id: 1, object: {}) { id } }")
+
+        assert exc_info.value.error_code == "insufficient_scope"
+        assert exc_info.value.required_scopes == ("write:reviews",)
+
     def test_execute_rejects_data_from_http_error(self):
         client, opener = make_client()
         opener.open.side_effect = http_error(

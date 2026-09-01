@@ -1,9 +1,10 @@
 """Contract smoke tests for Calibre and Qt-facing adapters."""
 
 from types import SimpleNamespace
-from unittest.mock import patch
+import sys
+from unittest.mock import Mock, call, patch
 
-from hardcover_sync.action import update_calibre_status
+from hardcover_sync.action import offer_pat_migration, update_calibre_status
 from hardcover_sync.config import ConfigWidget, READING_STATUSES
 from hardcover_sync.matcher import set_hardcover_slug
 from hardcover_sync.services import OperationGuard
@@ -77,6 +78,7 @@ def test_configuration_save_writes_mapping_and_option_contract():
     stored_prefs = {"api_token": "token"}
     widget = SimpleNamespace(
         token_input=FakeValueWidget("token"),
+        _allow_unvalidated_token="",
         _normalize_token=lambda value: value.strip(),
         status_combo=FakeValueWidget("#status"),
         rating_combo=FakeValueWidget("rating"),
@@ -109,6 +111,92 @@ def test_configuration_save_writes_mapping_and_option_contract():
     assert stored_prefs["sync_review"] is False
     assert stored_prefs["sync_statuses"] == [1, 2, 3]
     assert stored_prefs["enable_lab_lists"] is True
+
+
+def test_token_format_warning_hides_after_pasting_pat():
+    widget = SimpleNamespace(migration_label=Mock())
+
+    ConfigWidget._update_token_format_warning(widget, "eyJhbGciOiJIUzI1NiJ9.payload.signature")
+    ConfigWidget._update_token_format_warning(widget, "hc_pat_replacement")
+
+    assert widget.migration_label.setVisible.call_args_list == [
+        call(True),
+        call(False),
+    ]
+
+
+def test_configuration_validation_reports_missing_permissions():
+    widget = SimpleNamespace()
+    user = SimpleNamespace(username="reader", id=7)
+
+    with patch("hardcover_sync.api.HardcoverAPI") as api_class:
+        api_class.return_value.validate_token_permissions.return_value = (
+            False,
+            user,
+            ("write:reviews", "write:lists"),
+        )
+        result = ConfigWidget._validate_token(widget, "hc_pat_test")
+
+    assert result == (
+        False,
+        None,
+        "Missing required permissions: write:reviews, write:lists",
+    )
+
+
+def test_configuration_validate_rejects_changed_invalid_token():
+    widget = SimpleNamespace(
+        token_input=FakeValueWidget("hc_pat_incomplete"),
+        widget=object(),
+        _normalize_token=lambda value: value,
+        _validate_token=lambda _token: (False, None, "Missing required permissions: write:lists"),
+    )
+
+    with (
+        patch("hardcover_sync.config.prefs", {"api_token": "old-token"}),
+        patch("calibre.gui2.error_dialog"),
+    ):
+        assert ConfigWidget.validate(widget) is False
+
+
+def test_configuration_allows_explicit_save_after_transient_validation_failure():
+    widget = SimpleNamespace(
+        token_input=FakeValueWidget("hc_pat_unverified"),
+        widget=object(),
+        _allow_unvalidated_token="",
+        _normalize_token=lambda value: value,
+        _validate_token=lambda _token: (False, None, "HardcoverAPIError: service unavailable"),
+    )
+    gui2 = SimpleNamespace(question_dialog=Mock(return_value=True))
+
+    with (
+        patch("hardcover_sync.config.prefs", {"api_token": "old-token"}),
+        patch.dict(sys.modules, {"calibre.gui2": gui2}),
+    ):
+        assert ConfigWidget.validate(widget) is True
+
+    assert widget._allow_unvalidated_token == "hc_pat_unverified"  # noqa: S105
+
+
+def test_legacy_jwt_migration_prompt_is_shown_only_once():
+    stored_prefs = {
+        "api_token": "eyJhbGciOiJIUzI1NiJ9.payload.signature",
+        "pat_migration_prompt_shown": False,
+    }
+    show_configuration = Mock()
+    gui2 = SimpleNamespace(question_dialog=Mock(return_value=True), open_url=Mock())
+
+    with (
+        patch("hardcover_sync.action.get_plugin_prefs", return_value=stored_prefs),
+        patch.dict(sys.modules, {"calibre.gui2": gui2}),
+    ):
+        offer_pat_migration(object(), show_configuration)
+        offer_pat_migration(object(), show_configuration)
+
+    assert stored_prefs["pat_migration_prompt_shown"] is True
+    gui2.question_dialog.assert_called_once()
+    gui2.open_url.assert_called_once()
+    show_configuration.assert_called_once()
 
 
 def test_status_filter_cannot_leave_every_status_unchecked():

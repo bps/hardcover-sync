@@ -24,6 +24,29 @@ query Me {
 }
 """
 
+PERMISSIONS_QUERY = """
+query HardcoverSyncPermissions {
+    __schema {
+        queryType {
+            fields { name }
+        }
+        mutationType {
+            fields { name }
+        }
+    }
+}
+"""
+
+# GraphQL validates this mutation and its scoped review input, while @skip keeps
+# the resolver from running and guarantees that validation cannot change data.
+REVIEW_PERMISSION_QUERY = """
+mutation HardcoverSyncReviewPermission {
+    update_user_book(id: -1, object: {review_markdown: ""}) @skip(if: true) {
+        id
+    }
+}
+"""
+
 # =============================================================================
 # Book Lookup Queries
 # =============================================================================

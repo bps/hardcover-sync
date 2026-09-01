@@ -77,6 +77,14 @@ class TestAuthentication:
         assert is_valid is True
         assert user is not None
 
+    def test_configured_token_has_plugin_permissions(self, api):
+        """Test permission-filtered schema and skipped review authorization checks."""
+        is_valid, user, missing = api.validate_token_permissions()
+
+        assert is_valid is True
+        assert user is not None
+        assert missing == ()
+
     def test_invalid_token_fails(self):
         """Test that an invalid token is rejected."""
         bad_api = HardcoverAPI(token="invalid-token-12345")  # noqa: S106

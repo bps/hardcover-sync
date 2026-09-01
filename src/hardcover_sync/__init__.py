@@ -41,7 +41,8 @@ class HardcoverSyncPlugin(InterfaceActionBase):
 
     def save_settings(self, config_widget):
         """Save the settings from the configuration widget."""
-        config_widget.save_settings()
+        if config_widget.validate():
+            config_widget.save_settings()
 
     def do_user_config(self, parent=None, plugin_action=None):
         """
@@ -67,7 +68,12 @@ class HardcoverSyncPlugin(InterfaceActionBase):
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        button_box.accepted.connect(dialog.accept)
+
+        def accept_if_valid():
+            if config_widget.validate():
+                dialog.accept()
+
+        button_box.accepted.connect(accept_if_valid)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
 
