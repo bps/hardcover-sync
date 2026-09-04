@@ -20,14 +20,18 @@ import os
 
 import pytest
 
+from hardcover_sync import queries
 from hardcover_sync.api import (
     Book,
     HardcoverAPI,
+    InsufficientScopeError,
     User,
 )
 
 # Skip all tests in this module if no token is provided
-HARDCOVER_TOKEN = os.environ.get("HARDCOVER_API_TOKEN")
+HARDCOVER_PAT_TOKEN = os.environ.get("HARDCOVER_PAT_TOKEN")
+HARDCOVER_RESTRICTED_PAT_TOKEN = os.environ.get("HARDCOVER_RESTRICTED_PAT_TOKEN")
+HARDCOVER_TOKEN = os.environ.get("HARDCOVER_API_TOKEN") or HARDCOVER_PAT_TOKEN
 pytestmark = pytest.mark.skipif(
     not HARDCOVER_TOKEN,
     reason="HARDCOVER_API_TOKEN environment variable not set",
@@ -50,6 +54,18 @@ def dry_run_api():
 def current_user(api):
     """Get the current user (cached for the module)."""
     return api.get_me()
+
+
+@pytest.fixture(scope="module")
+def pat_api():
+    """Create a client using a full-scope personal access token."""
+    return HardcoverAPI(token=HARDCOVER_PAT_TOKEN)
+
+
+@pytest.fixture(scope="module")
+def restricted_pat_api():
+    """Create a client using a PAT that lacks only write:reviews."""
+    return HardcoverAPI(token=HARDCOVER_RESTRICTED_PAT_TOKEN)
 
 
 # =============================================================================
@@ -77,6 +93,14 @@ class TestAuthentication:
         assert is_valid is True
         assert user is not None
 
+    def test_configured_token_has_plugin_permissions(self, api):
+        """Test permission-filtered schema and skipped review authorization checks."""
+        is_valid, user, missing = api.validate_token_permissions()
+
+        assert is_valid is True
+        assert user is not None
+        assert missing == ()
+
     def test_invalid_token_fails(self):
         """Test that an invalid token is rejected."""
         bad_api = HardcoverAPI(token="invalid-token-12345")  # noqa: S106
@@ -85,6 +109,66 @@ class TestAuthentication:
 
         assert is_valid is False
         assert user is None
+
+
+# =============================================================================
+# Personal access token contract tests
+# =============================================================================
+
+
+@pytest.mark.skipif(
+    not HARDCOVER_PAT_TOKEN,
+    reason="HARDCOVER_PAT_TOKEN environment variable not set",
+)
+class TestPersonalAccessTokenPermissions:
+    """Tests that depend on the real API's PAT scope enforcement."""
+
+    def test_full_scope_pat_validates_and_probe_does_not_change_review(self, pat_api):
+        assert HARDCOVER_PAT_TOKEN.startswith("hc_pat_")
+
+        user_books = pat_api.get_user_books(limit=1)
+        before = user_books[0] if user_books else None
+
+        is_valid, user, missing = pat_api.validate_token_permissions()
+
+        assert is_valid is True
+        assert user is not None
+        assert missing == ()
+        if before is not None:
+            after = pat_api.get_user_book(before.book_id)
+            assert after is not None
+            assert after.review == before.review
+
+    def test_skipped_review_probe_returns_no_data(self, pat_api):
+        assert pat_api._execute(queries.REVIEW_PERMISSION_QUERY) == {}
+
+
+@pytest.mark.skipif(
+    not HARDCOVER_RESTRICTED_PAT_TOKEN,
+    reason="HARDCOVER_RESTRICTED_PAT_TOKEN environment variable not set",
+)
+class TestRestrictedPersonalAccessTokenPermissions:
+    """Verify the real missing-write:reviews response and classification."""
+
+    def test_restricted_pat_reports_only_write_reviews(self, restricted_pat_api):
+        assert HARDCOVER_RESTRICTED_PAT_TOKEN.startswith("hc_pat_")
+
+        assert restricted_pat_api.get_missing_permissions() == ("write:reviews",)
+
+    def test_restricted_pat_review_probe_is_classified_and_does_not_change_review(
+        self, restricted_pat_api
+    ):
+        user_books = restricted_pat_api.get_user_books(limit=1)
+        before = user_books[0] if user_books else None
+
+        with pytest.raises(InsufficientScopeError) as exc_info:
+            restricted_pat_api._execute(queries.REVIEW_PERMISSION_QUERY)
+
+        assert "write:reviews" in exc_info.value.required_scopes
+        if before is not None:
+            after = restricted_pat_api.get_user_book(before.book_id)
+            assert after is not None
+            assert after.review == before.review
 
 
 # =============================================================================

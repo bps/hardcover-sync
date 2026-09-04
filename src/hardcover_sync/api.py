@@ -6,6 +6,7 @@ the Hardcover.app GraphQL API.
 """
 
 import json
+import logging
 import math
 import time
 from datetime import date
@@ -14,6 +15,7 @@ from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from . import queries  # noqa: E402
+from .auth import PAT_SCOPES  # noqa: E402
 from .models import (  # noqa: E402
     Author,
     Book,
@@ -33,13 +35,42 @@ _MAX_ERROR_MESSAGE_LENGTH = 500
 _MAX_RATE_LIMIT_RETRIES = 2
 _MAX_RETRY_DELAY_SECONDS = 10.0
 
+logger = logging.getLogger(__name__)
+
+_PERMISSION_OPERATIONS = {
+    "read:catalog": ("queryType", {"books", "editions", "search"}),
+    "read:library": ("queryType", {"user_books"}),
+    "read:lists": ("queryType", {"lists", "list_books"}),
+    "read:me:content": ("queryType", {"me"}),
+    "write:library": (
+        "mutationType",
+        {
+            "insert_user_book",
+            "update_user_book",
+            "delete_user_book",
+            "insert_user_book_read",
+            "update_user_book_read",
+            "delete_user_book_read",
+        },
+    ),
+    "write:lists": ("mutationType", {"insert_list_book", "delete_list_book"}),
+}
+
 
 class GraphQLResponseError(Exception):
     """Raised when Hardcover returns a GraphQL error or invalid response."""
 
-    def __init__(self, message: str, status: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        status: int | None = None,
+        error_code: str | None = None,
+        required_scopes: tuple[str, ...] = (),
+    ) -> None:
         super().__init__(message[:_MAX_ERROR_MESSAGE_LENGTH])
         self.status = status
+        self.error_code = error_code
+        self.required_scopes = required_scopes
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -69,20 +100,42 @@ class HardcoverHTTPClient:
             return str(errors.get("message", errors))
         return str(errors)
 
+    @staticmethod
+    def _required_scopes(payload: dict[str, Any]) -> tuple[str, ...]:
+        scope = payload.get("scope")
+        if isinstance(scope, str):
+            return tuple(scope.split())
+        if isinstance(scope, list):
+            return tuple(item for item in scope if isinstance(item, str))
+        return ()
+
     @classmethod
     def _extract_data(cls, payload: object, status: int | None = None) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise GraphQLResponseError("GraphQL response was not a JSON object", status)
 
+        error_code = payload.get("error")
+        description = payload.get("error_description")
         errors = payload.get("errors")
         if errors:
-            raise GraphQLResponseError(cls._error_message(errors), status)
+            message = description if isinstance(description, str) else cls._error_message(errors)
+            raise GraphQLResponseError(
+                message,
+                status,
+                error_code if isinstance(error_code, str) else None,
+                cls._required_scopes(payload),
+            )
 
         data = payload.get("data")
         if not isinstance(data, dict):
-            message = payload.get("message") or payload.get("error")
+            message = description or payload.get("message") or error_code
             if isinstance(message, str):
-                raise GraphQLResponseError(message, status)
+                raise GraphQLResponseError(
+                    message,
+                    status,
+                    error_code if isinstance(error_code, str) else None,
+                    cls._required_scopes(payload),
+                )
             raise GraphQLResponseError("GraphQL response did not contain data", status)
         if status is not None and status >= 400:
             raise GraphQLResponseError(f"Request failed: HTTP {status}", status)
@@ -165,6 +218,15 @@ class AuthenticationError(HardcoverAPIError):
     pass
 
 
+class InsufficientScopeError(HardcoverAPIError):
+    """Raised when a token lacks one or more permissions required by an operation."""
+
+    def __init__(self, required_scopes: tuple[str, ...] = ()) -> None:
+        self.required_scopes = required_scopes
+        detail = ", ".join(required_scopes) if required_scopes else "additional permission"
+        super().__init__(f"API operation requires {detail}")
+
+
 class RateLimitError(HardcoverAPIError):
     """Raised when rate limit is exceeded."""
 
@@ -228,20 +290,27 @@ class HardcoverAPI:
             return self.client.execute(query, variables)
         except GraphQLResponseError as e:
             error_msg = str(e)
-            if e.status in {401, 403}:
-                raise AuthenticationError("Invalid API token") from e
+            if e.status == 401:
+                raise AuthenticationError("Invalid or expired API token") from e
+            if e.status == 403 and (
+                e.error_code == "insufficient_scope" or "insufficient scope" in error_msg.lower()
+            ):
+                raise InsufficientScopeError(e.required_scopes) from e
             if e.status == 429:
                 raise RateLimitError("Rate limit exceeded; please try again later") from e
             if e.status is None and any(
-                text in error_msg.lower() for text in ("unauthorized", "invalid")
+                text in error_msg.lower()
+                for text in ("unauthorized", "invalid token", "token is invalid")
             ):
                 raise AuthenticationError("Invalid API token") from e
+            if e.status is None and "insufficient scope" in error_msg.lower():
+                raise InsufficientScopeError() from e
             if e.status is None and "rate limit" in error_msg.lower():
                 raise RateLimitError("Rate limit exceeded; please try again later") from e
             raise HardcoverAPIError(f"API error: {error_msg}") from e
         except HTTPError as e:
-            if e.code in {401, 403}:
-                raise AuthenticationError("Invalid API token") from e
+            if e.code == 401:
+                raise AuthenticationError("Invalid or expired API token") from e
             if e.code == 429:
                 raise RateLimitError("Rate limit exceeded; please try again later") from e
             raise HardcoverAPIError(f"Request failed: HTTP {e.code}") from e
@@ -349,6 +418,66 @@ class HardcoverAPI:
             return True, user
         except (AuthenticationError, HardcoverAPIError):
             return False, None
+
+    @staticmethod
+    def _schema_field_names(schema: dict[str, Any], root_name: str) -> set[str]:
+        """Extract root field names from a permission-filtered schema."""
+        root = schema.get(root_name)
+        if root is None:
+            return set()
+        if not isinstance(root, dict) or not isinstance(root.get("fields"), list):
+            raise HardcoverAPIError("API permission check returned an invalid schema")
+        return {
+            field["name"]
+            for field in root["fields"]
+            if isinstance(field, dict) and isinstance(field.get("name"), str)
+        }
+
+    def get_missing_permissions(self) -> tuple[str, ...]:
+        """Return PAT scopes needed by plugin operations but unavailable to this token."""
+        result = self._execute(queries.PERMISSIONS_QUERY)
+        schema = result.get("__schema")
+        if not isinstance(schema, dict):
+            raise HardcoverAPIError("API permission check did not return a schema")
+
+        available = {
+            root_name: self._schema_field_names(schema, root_name)
+            for root_name in {root for root, _fields in _PERMISSION_OPERATIONS.values()}
+        }
+        missing = [
+            scope
+            for scope, (root_name, operations) in _PERMISSION_OPERATIONS.items()
+            if not operations.issubset(available[root_name])
+        ]
+
+        # write:reviews is enforced from the mutation input rather than by a
+        # unique root field. @skip makes this an authorization-only request:
+        # GraphQL validates the scoped input but never executes the resolver.
+        if "write:library" not in missing:
+            try:
+                self._execute(queries.REVIEW_PERMISSION_QUERY)
+            except InsufficientScopeError as error:
+                if not error.required_scopes or "write:reviews" in error.required_scopes:
+                    missing.append("write:reviews")
+                else:
+                    raise
+            except HardcoverAPIError as error:
+                # The PAT is opaque, so this scoped input is the only advance
+                # check available. Runtime mutations still surface exact 403s.
+                logger.warning("Could not verify write:reviews permission: %s", error)
+
+        return tuple(scope for scope in PAT_SCOPES if scope in missing)
+
+    def validate_token_permissions(self) -> tuple[bool, User | None, tuple[str, ...]]:
+        """Validate the token and all permissions used by the plugin."""
+        try:
+            missing = self.get_missing_permissions()
+            if missing:
+                return False, None, missing
+            user = self.get_me()
+            return True, user, ()
+        except AuthenticationError:
+            return False, None, ()
 
     # =========================================================================
     # Book Lookup Methods

@@ -15,6 +15,8 @@ from typing import Any
 # Calibre imports - only available in Calibre's runtime environment
 from calibre.utils.config import JSONConfig
 
+from .auth import PAT_CREATION_URL, is_legacy_jwt, normalize_token
+
 # Hardcover reading status mapping (all API statuses)
 READING_STATUSES = {
     1: "Want to Read",
@@ -56,6 +58,7 @@ DEFAULT_PREFS = {
     "api_token": "",
     "username": "",
     "user_id": None,
+    "pat_migration_prompt_shown": False,
     # Column mappings (None or empty string means not mapped)
     "status_column": "",
     "rating_column": "",
@@ -278,6 +281,7 @@ class ConfigWidget:
         from qt.core import QTabWidget, QVBoxLayout, QWidget
 
         self.plugin_action = plugin_action
+        self._allow_unvalidated_token = ""
         self.widget = QWidget()
         self.main_layout = QVBoxLayout(self.widget)
 
@@ -323,7 +327,7 @@ class ConfigWidget:
         token_row = QHBoxLayout()
         token_row.addWidget(QLabel("API Token:"))
         self.token_input = QLineEdit()
-        self.token_input.setPlaceholderText("Paste your API token from hardcover.app/account/api")
+        self.token_input.setPlaceholderText("Paste your hc_pat_… personal access token")
         self.token_input.setText(prefs.get("api_token", ""))
         token_row.addWidget(self.token_input, 1)
 
@@ -338,12 +342,20 @@ class ConfigWidget:
         self._update_status_display()
         auth_layout.addWidget(self.status_label)
 
-        # Link to get API token
-        link_label = QLabel(
-            '<a href="https://hardcover.app/account/api">Get your API token from Hardcover</a>'
-        )
+        # Link to create a PAT with every permission the plugin uses.
+        link_label = QLabel(f'<a href="{PAT_CREATION_URL}">Create a Hardcover API token</a>')
         link_label.setOpenExternalLinks(True)
         auth_layout.addWidget(link_label)
+
+        self.migration_label = QLabel(
+            "Your configured token uses the legacy JWT format. Create a personal access "
+            "token above, then replace it here."
+        )
+        self.migration_label.setWordWrap(True)
+        self.migration_label.setStyleSheet("color: #b35900;")
+        auth_layout.addWidget(self.migration_label)
+        self.token_input.textChanged.connect(self._update_token_format_warning)
+        self._update_token_format_warning(self.token_input.text())
 
         layout.addWidget(auth_group)
         layout.addStretch()
@@ -608,7 +620,7 @@ class ConfigWidget:
 
         # Version label at the bottom
         version_label = QLabel(f"Version: {__version__}")
-        version_label.setAlignment(Qt.AlignRight)
+        version_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         version_label.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(version_label)
 
@@ -678,6 +690,10 @@ class ConfigWidget:
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to the internal widget."""
         return getattr(self.widget, name)
+
+    def _update_token_format_warning(self, token: str) -> None:
+        """Show the migration warning only while the input contains a legacy JWT."""
+        self.migration_label.setVisible(is_legacy_jwt(token))
 
     def _update_status_display(self) -> None:
         """Update the status label based on current preferences."""
@@ -749,10 +765,12 @@ class ConfigWidget:
 
         try:
             api = HardcoverAPI(token=token, timeout=15)
-            is_valid, user = api.validate_token()
+            is_valid, user, missing = api.validate_token_permissions()
             if is_valid and user:
                 return True, user, None
-            return False, None, "Invalid token or authentication failed"
+            if missing:
+                return False, None, f"Missing required permissions: {', '.join(missing)}"
+            return False, None, "Invalid or expired token"
         except Exception as e:
             # Sanitize error message to avoid leaking the token
             error_msg = str(e)
@@ -770,10 +788,43 @@ class ConfigWidget:
         Returns:
             The normalized token without 'Bearer ' prefix.
         """
-        token = token.strip()
-        if token.lower().startswith("bearer "):
-            token = token[7:].strip()
-        return token
+        return normalize_token(token)
+
+    def validate(self) -> bool:
+        """Keep the configuration open when a changed token cannot be validated."""
+        token = self._normalize_token(self.token_input.text())
+        if not token or token == prefs.get("api_token", ""):
+            return True
+
+        is_valid, user, error = self._validate_token(token)
+        if is_valid and user:
+            prefs["api_token"] = token
+            prefs["username"] = user.username
+            prefs["user_id"] = user.id
+            return True
+
+        error = error or "The token could not be validated."
+        if error == "Invalid or expired token" or error.startswith("Missing required permissions:"):
+            from calibre.gui2 import error_dialog
+
+            error_dialog(
+                self.widget,
+                "Invalid Hardcover API Token",
+                error,
+                show=True,
+            )
+            return False
+
+        from calibre.gui2 import question_dialog
+
+        save_anyway = question_dialog(
+            self.widget,
+            "Could Not Validate Hardcover API Token",
+            f"{error}\n\nSave this token without validating it?",
+        )
+        if save_anyway:
+            self._allow_unvalidated_token = token
+        return save_anyway
 
     def save_settings(self) -> None:
         """Save all settings from the configuration dialog."""
@@ -783,16 +834,19 @@ class ConfigWidget:
 
         if token != current_token:
             if token:
-                # Token changed - validate and save
-                is_valid, user, _error = self._validate_token(token)
-                if is_valid and user:
-                    prefs["api_token"] = token
-                    prefs["username"] = user.username
-                    prefs["user_id"] = user.id
-                else:
+                if token == self._allow_unvalidated_token:
                     prefs["api_token"] = token
                     prefs["username"] = ""
                     prefs["user_id"] = None
+                else:
+                    # Token changed - validate and save
+                    is_valid, user, _error = self._validate_token(token)
+                    if is_valid and user:
+                        prefs["api_token"] = token
+                        prefs["username"] = user.username
+                        prefs["user_id"] = user.id
+                    else:
+                        logger.warning("Did not save invalid Hardcover API token: %s", _error)
             else:
                 prefs["api_token"] = ""
                 prefs["username"] = ""

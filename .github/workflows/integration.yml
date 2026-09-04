@@ -22,12 +22,19 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Require integration token
+      - name: Require integration tokens
         env:
           HARDCOVER_API_TOKEN: ${{ secrets.HARDCOVER_API_TOKEN }}
-        run: test -n "$HARDCOVER_API_TOKEN"
+          HARDCOVER_PAT_TOKEN: ${{ secrets.HARDCOVER_PAT_TOKEN }}
+          HARDCOVER_RESTRICTED_PAT_TOKEN: ${{ secrets.HARDCOVER_RESTRICTED_PAT_TOKEN }}
+        run: |
+          test -n "$HARDCOVER_API_TOKEN"
+          test -n "$HARDCOVER_PAT_TOKEN"
+          test -n "$HARDCOVER_RESTRICTED_PAT_TOKEN"
 
       - name: Run live API tests
         env:
           HARDCOVER_API_TOKEN: ${{ secrets.HARDCOVER_API_TOKEN }}
+          HARDCOVER_PAT_TOKEN: ${{ secrets.HARDCOVER_PAT_TOKEN }}
+          HARDCOVER_RESTRICTED_PAT_TOKEN: ${{ secrets.HARDCOVER_RESTRICTED_PAT_TOKEN }}
         run: uv run pytest test/test_integration.py -q -rs

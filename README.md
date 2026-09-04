@@ -29,10 +29,12 @@ A Calibre plugin for bidirectional sync with [Hardcover.app](https://hardcover.a
    > [!WARNING]
    > Your API token is stored in cleartext in Calibre's plugin configuration. Keep your Calibre configuration directory secure and do not share your `plugins/Hardcover Sync.json` file.
 
-1. Get your API token from https://hardcover.app/account/api
+1. [Create a personal access token with the permissions Hardcover Sync needs](https://hardcover.app/account/api/keys/new?scope=read%3Acatalog+read%3Alibrary+read%3Alists+read%3Ame%3Acontent+write%3Alibrary+write%3Areviews+write%3Alists). The link preselects `read:catalog`, `read:library`, `read:lists`, `read:me:content`, `write:library`, `write:reviews`, and `write:lists`; review them before creating the token.
 2. In Calibre, go to **Preferences → Plugins → Hardcover Sync → Customize plugin**
-3. Enter your API token and click **Validate**
+3. Enter the new `hc_pat_…` token and click **Validate**. Validation checks that the token can access the operations used by the plugin.
 4. Configure column mappings for the data you want to sync
+
+If you replace a legacy JWT, revoke it from your [Hardcover API settings](https://hardcover.app/account/api) after the new personal access token is working.
 
 ### Recommended custom columns
 
@@ -178,12 +180,17 @@ uv run prek run --all-files
 # Unit tests (mocked, no API token needed)
 just test
 
-# Integration tests (requires API token)
+# General integration tests (legacy JWT or PAT)
 export HARDCOVER_API_TOKEN="your-token"
+
+# PAT permission tests (optional)
+export HARDCOVER_PAT_TOKEN="your-full-scope-hc_pat-token"
+export HARDCOVER_RESTRICTED_PAT_TOKEN="your-PAT-without-write-reviews"
+
 uv run pytest test/test_integration.py -v
 ```
 
-Integration tests use read-only operations and dry-run mode for mutations, so they won't modify your Hardcover library.
+Integration tests use read-only operations, skipped GraphQL mutations, and dry-run mode for mutations, so they won't modify your Hardcover library. The restricted PAT must include every Hardcover Sync scope except `write:reviews`.
 
 ## Acknowledgments
 

@@ -82,6 +82,7 @@ class TestDefaultPrefs:
         assert DEFAULT_PREFS["api_token"] == ""
         assert DEFAULT_PREFS["username"] == ""
         assert DEFAULT_PREFS["user_id"] is None
+        assert DEFAULT_PREFS["pat_migration_prompt_shown"] is False
 
     def test_default_prefs_has_column_mappings(self):
         """Test that column mapping fields have defaults."""
