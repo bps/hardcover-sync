@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-09-04
+
+### Features
+
+- Support Hardcover personal access tokens
+
+### Testing
+
+- Expand PAT migration coverage
+
 ## [0.5.1] - 2026-08-31
 
 ### Bug Fixes
