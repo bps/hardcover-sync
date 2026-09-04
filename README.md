@@ -180,12 +180,17 @@ uv run prek run --all-files
 # Unit tests (mocked, no API token needed)
 just test
 
-# Integration tests (requires API token)
+# General integration tests (legacy JWT or PAT)
 export HARDCOVER_API_TOKEN="your-token"
+
+# PAT permission tests (optional)
+export HARDCOVER_PAT_TOKEN="your-full-scope-hc_pat-token"
+export HARDCOVER_RESTRICTED_PAT_TOKEN="your-PAT-without-write-reviews"
+
 uv run pytest test/test_integration.py -v
 ```
 
-Integration tests use read-only operations and dry-run mode for mutations, so they won't modify your Hardcover library.
+Integration tests use read-only operations, skipped GraphQL mutations, and dry-run mode for mutations, so they won't modify your Hardcover library. The restricted PAT must include every Hardcover Sync scope except `write:reviews`.
 
 ## Acknowledgments
 

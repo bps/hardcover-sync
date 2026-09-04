@@ -81,8 +81,14 @@ just coverage
 # Run specific test file
 uv run pytest test/test_api.py -v
 
-# Run integration tests (requires API token)
+# Run general integration tests (legacy JWT or PAT)
 export HARDCOVER_API_TOKEN="your-token"
+uv run pytest test/test_integration.py -v
+
+# Run PAT permission contract tests. The restricted PAT must include every
+# Hardcover Sync scope except write:reviews.
+export HARDCOVER_PAT_TOKEN="your-full-scope-hc_pat-token"
+export HARDCOVER_RESTRICTED_PAT_TOKEN="your-restricted-hc_pat-token"
 uv run pytest test/test_integration.py -v
 ```
 

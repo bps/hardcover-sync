@@ -27,6 +27,39 @@ class FakeValueWidget:
         self.value = value
 
 
+def make_config_widget(token=None, **overrides):
+    """Build the smallest ConfigWidget adapter needed by save_settings tests."""
+    if token is None:
+        token = "token"  # noqa: S105
+    values = {
+        "token_input": FakeValueWidget(token),
+        "_allow_unvalidated_token": "",
+        "_normalize_token": lambda value: value.strip(),
+        "_validate_token": Mock(),
+        "status_combo": FakeValueWidget("#status"),
+        "rating_combo": FakeValueWidget("rating"),
+        "progress_combo": FakeValueWidget("#progress"),
+        "progress_percent_combo": FakeValueWidget("#progress_pct"),
+        "date_started_combo": FakeValueWidget("#started"),
+        "date_read_combo": FakeValueWidget("#finished"),
+        "is_read_combo": FakeValueWidget("#read"),
+        "review_combo": FakeValueWidget("#review"),
+        "status_mapping_inputs": {3: FakeValueWidget("Finished")},
+        "auto_link_checkbox": FakeValueWidget(True),
+        "sync_rating_checkbox": FakeValueWidget(True),
+        "sync_progress_checkbox": FakeValueWidget(False),
+        "sync_dates_checkbox": FakeValueWidget(True),
+        "sync_review_checkbox": FakeValueWidget(False),
+        "status_filter_checkboxes": {
+            status_id: FakeValueWidget(status_id in {1, 2, 3}) for status_id in READING_STATUSES
+        },
+        "lab_update_progress_checkbox": FakeValueWidget(False),
+        "lab_lists_checkbox": FakeValueWidget(True),
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 class FakeCalibreDB:
     def __init__(self, identifiers=None) -> None:
         self.identifiers = identifiers or {}
@@ -76,30 +109,7 @@ def test_toolbar_status_write_uses_configured_mapping():
 
 def test_configuration_save_writes_mapping_and_option_contract():
     stored_prefs = {"api_token": "token"}
-    widget = SimpleNamespace(
-        token_input=FakeValueWidget("token"),
-        _allow_unvalidated_token="",
-        _normalize_token=lambda value: value.strip(),
-        status_combo=FakeValueWidget("#status"),
-        rating_combo=FakeValueWidget("rating"),
-        progress_combo=FakeValueWidget("#progress"),
-        progress_percent_combo=FakeValueWidget("#progress_pct"),
-        date_started_combo=FakeValueWidget("#started"),
-        date_read_combo=FakeValueWidget("#finished"),
-        is_read_combo=FakeValueWidget("#read"),
-        review_combo=FakeValueWidget("#review"),
-        status_mapping_inputs={3: FakeValueWidget("Finished")},
-        auto_link_checkbox=FakeValueWidget(True),
-        sync_rating_checkbox=FakeValueWidget(True),
-        sync_progress_checkbox=FakeValueWidget(False),
-        sync_dates_checkbox=FakeValueWidget(True),
-        sync_review_checkbox=FakeValueWidget(False),
-        status_filter_checkboxes={
-            status_id: FakeValueWidget(status_id in {1, 2, 3}) for status_id in READING_STATUSES
-        },
-        lab_update_progress_checkbox=FakeValueWidget(False),
-        lab_lists_checkbox=FakeValueWidget(True),
-    )
+    widget = make_config_widget()
 
     with patch("hardcover_sync.config.prefs", stored_prefs):
         ConfigWidget.save_settings(widget)
@@ -176,6 +186,65 @@ def test_configuration_allows_explicit_save_after_transient_validation_failure()
         assert ConfigWidget.validate(widget) is True
 
     assert widget._allow_unvalidated_token == "hc_pat_unverified"  # noqa: S105
+
+
+def test_unvalidated_token_save_persists_token_and_clears_cached_identity():
+    stored_prefs = {
+        "api_token": "old-token",
+        "username": "old-reader",
+        "user_id": 7,
+    }
+    widget = make_config_widget("hc_pat_unverified")
+    widget._allow_unvalidated_token = "hc_pat_unverified"  # noqa: S105
+
+    with patch("hardcover_sync.config.prefs", stored_prefs):
+        ConfigWidget.save_settings(widget)
+
+    assert stored_prefs["api_token"] == "hc_pat_unverified"  # noqa: S105
+    assert stored_prefs["username"] == ""
+    assert stored_prefs["user_id"] is None
+    widget._validate_token.assert_not_called()
+
+
+def test_rejected_under_scoped_token_preserves_previous_credentials():
+    stored_prefs = {
+        "api_token": "old-token",
+        "username": "old-reader",
+        "user_id": 7,
+    }
+    widget = make_config_widget("hc_pat_incomplete")
+    widget._validate_token.return_value = (
+        False,
+        None,
+        "Missing required permissions: write:reviews",
+    )
+
+    with patch("hardcover_sync.config.prefs", stored_prefs):
+        ConfigWidget.save_settings(widget)
+
+    assert stored_prefs["api_token"] == "old-token"  # noqa: S105
+    assert stored_prefs["username"] == "old-reader"
+    assert stored_prefs["user_id"] == 7
+
+
+def test_unchanged_legacy_jwt_preserves_credentials_while_saving_settings():
+    jwt = "eyJhbGciOiJIUzI1NiJ9.payload.signature"
+    stored_prefs = {
+        "api_token": jwt,
+        "username": "legacy-reader",
+        "user_id": 7,
+    }
+    widget = make_config_widget(token=jwt, status_combo=FakeValueWidget("#new_status"))
+
+    with patch("hardcover_sync.config.prefs", stored_prefs):
+        assert ConfigWidget.validate(widget) is True
+        ConfigWidget.save_settings(widget)
+
+    assert stored_prefs["api_token"] == jwt
+    assert stored_prefs["username"] == "legacy-reader"
+    assert stored_prefs["user_id"] == 7
+    assert stored_prefs["status_column"] == "#new_status"
+    widget._validate_token.assert_not_called()
 
 
 def test_legacy_jwt_migration_prompt_is_shown_only_once():

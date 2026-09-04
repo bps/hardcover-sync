@@ -223,8 +223,8 @@ class InsufficientScopeError(HardcoverAPIError):
 
     def __init__(self, required_scopes: tuple[str, ...] = ()) -> None:
         self.required_scopes = required_scopes
-        detail = ", ".join(required_scopes) if required_scopes else "a required permission"
-        super().__init__(f"API token is missing {detail}")
+        detail = ", ".join(required_scopes) if required_scopes else "additional permission"
+        super().__init__(f"API operation requires {detail}")
 
 
 class RateLimitError(HardcoverAPIError):

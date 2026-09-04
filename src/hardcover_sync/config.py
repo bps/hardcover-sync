@@ -620,7 +620,7 @@ class ConfigWidget:
 
         # Version label at the bottom
         version_label = QLabel(f"Version: {__version__}")
-        version_label.setAlignment(Qt.AlignRight)
+        version_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         version_label.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(version_label)
 
