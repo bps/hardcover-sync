@@ -131,6 +131,38 @@ You can add a read-only custom column that shows a green check when a book has a
 
 This column is computed from the identifier stored in Calibre; it does not verify that the identifier still resolves on Hardcover.
 
+### Bonus: Allow for "Ignored" Hardcover linking
+
+Some books that you might have (omnibus volumes, educational papers, etc.) may not be on Hardcover, and if you're attempting to keep your collection synced as much as possible, having to weed through all of the "not synced" items can be frustrating if there are certain books you want to disregard.
+
+> [!NOTE]
+> This is not a functional "ignore"; you can still select this book and attempt to link it. This is only a visual flag that you have chosen to ignore this, & to break it out of the default "yes/no" sorting.
+
+If you want to mark a book as "Ignored" from syncing:
+1. Follow the steps above to add the custom column, or return to the **Preferences → Add your own columns** view & edit your existing column
+2. When you go to set or update the **Template**, click the Edit button next to the field
+
+<img width="670" height="754" alt="Screenshot 2026-09-09 at 10 24 51" src="https://github.com/user-attachments/assets/c1d032da-6c08-45d4-bdb7-89eea256b8af" />
+
+3. In the Template: box, paste the following, and press "OK:
+
+```
+program:
+    if identifier_in_list(field('identifiers'), 'hardcover', '1', '') then
+        'yes'
+    elif str_in_list(field('tags'), ',', 'hardcover-sync-ignored', '1', '') then
+        'ignored'
+    else
+        'no'
+    fi
+```
+
+<img width="1081" height="658" alt="Screenshot 2026-09-09 at 10 31 40" src="https://github.com/user-attachments/assets/8bf1782d-2c16-4067-b700-8d6f9a45ec61" />
+
+4. Find any book that you'd like to flag as "ignored", edit its metadata, and add a tag of `hardcover-sync-ignored`
+
+<img width="1151" height="812" alt="Screenshot 2026-09-09 at 10 25 59" src="https://github.com/user-attachments/assets/1fa109c4-5aed-4403-bc63-ddc041599503" />
+
 ## Development
 
 ### Prerequisites
