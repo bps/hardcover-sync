@@ -8,10 +8,13 @@ the Hardcover.app GraphQL API.
 import json
 import logging
 import math
+import re
+import socket
 import time
 from datetime import date
+from http.client import IncompleteRead
 from typing import Any
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from . import queries  # noqa: E402
@@ -32,7 +35,7 @@ from .models import (  # noqa: E402
 API_URL = "https://api.hardcover.app/v1/graphql"
 DEFAULT_TIMEOUT = 30  # seconds
 _MAX_ERROR_MESSAGE_LENGTH = 500
-_MAX_RATE_LIMIT_RETRIES = 2
+_MAX_RETRIES = 2
 _MAX_RETRY_DELAY_SECONDS = 10.0
 
 logger = logging.getLogger(__name__)
@@ -142,8 +145,16 @@ class HardcoverHTTPClient:
         return data
 
     @staticmethod
-    def _retry_delay(error: HTTPError, retry_number: int) -> float:
-        retry_after = error.headers.get("Retry-After") if error.headers else None
+    def _is_transient_connection_error(error: Exception) -> bool:
+        # urllib wraps connection errors, but response/read errors can be unwrapped.
+        reason = error.reason if isinstance(error, URLError) else error
+        if isinstance(reason, (TimeoutError, ConnectionError, IncompleteRead)):
+            return True
+        return isinstance(reason, socket.gaierror) and reason.errno == socket.EAI_AGAIN
+
+    @staticmethod
+    def _retry_delay(error: HTTPError | None, retry_number: int) -> float:
+        retry_after = error.headers.get("Retry-After") if error and error.headers else None
         if retry_after is not None:
             try:
                 delay = float(retry_after)
@@ -163,8 +174,11 @@ class HardcoverHTTPClient:
             payload["variables"] = variables
 
         request_body = json.dumps(payload).encode("utf-8")
+        # Only recognizable queries can be replayed after an ambiguous network failure.
+        # We send no operationName, so the server rejects multi-operation documents.
+        read_only = re.match(r"^\s*(?:query\b|\{)", query) is not None
         response_body = b""
-        for retry_number in range(_MAX_RATE_LIMIT_RETRIES + 1):
+        for retry_number in range(_MAX_RETRIES + 1):
             # Request objects may be mutated by urllib handlers, so rebuild on retry.
             request = Request(  # noqa: S310 - API_URL is a fixed HTTPS endpoint
                 API_URL,
@@ -185,7 +199,7 @@ class HardcoverHTTPClient:
             except HTTPError as error:
                 if error.code < 400:
                     raise error from None
-                if error.code == 429 and retry_number < _MAX_RATE_LIMIT_RETRIES:
+                if error.code == 429 and retry_number < _MAX_RETRIES:
                     delay = self._retry_delay(error, retry_number)
                     error.close()
                     time.sleep(delay)
@@ -198,6 +212,22 @@ class HardcoverHTTPClient:
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     raise error from None
                 return self._extract_data(error_payload, status=error.code)
+            except (OSError, IncompleteRead) as error:
+                if (
+                    not read_only
+                    or not self._is_transient_connection_error(error)
+                    or retry_number >= _MAX_RETRIES
+                ):
+                    raise
+                delay = self._retry_delay(None, retry_number)
+                logger.warning(
+                    "Transient %s during read-only API query; retry %s/%s in %.1fs",
+                    type(error).__name__,
+                    retry_number + 1,
+                    _MAX_RETRIES,
+                    delay,
+                )
+                time.sleep(delay)
 
         try:
             response_payload = json.loads(response_body)
