@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-09-30
+
+### Bug fixes
+
+- Retry transient connection failures for API queries
+- Preserve library context in plugin settings
+
+### CI/CD
+
+- Update checkout and uv actions for Node 24
+- Separate uv caches by Python matrix version
+
 ## [0.6.0] - 2026-09-04
 
 ### Features
