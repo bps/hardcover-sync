@@ -37,7 +37,7 @@ class HardcoverSyncPlugin(InterfaceActionBase):
         """Return the configuration widget."""
         from .config import ConfigWidget
 
-        return ConfigWidget()
+        return ConfigWidget(plugin_action=self.actual_plugin_)
 
     def save_settings(self, config_widget):
         """Save the settings from the configuration widget."""
@@ -52,11 +52,15 @@ class HardcoverSyncPlugin(InterfaceActionBase):
         Args:
             parent: Parent widget for the dialog.
             plugin_action: The InterfaceAction instance (provides access to GUI/database).
+                Defaults to the action loaded by Calibre when omitted.
         """
         from qt.core import QDialog, QDialogButtonBox, QVBoxLayout
 
         from .config import ConfigWidget
 
+        # Calibre's Preferences dialog passes only the parent GUI, not the action.
+        if plugin_action is None:
+            plugin_action = self.actual_plugin_
         config_widget = ConfigWidget(plugin_action=plugin_action)
 
         dialog = QDialog(parent)
